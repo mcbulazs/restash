@@ -44,6 +44,19 @@ func (s *Server) MetricsHandler() http.Handler {
 		metric("restash_people", "Accounts.", "gauge")
 		fmt.Fprintf(&b, "restash_people %d\n", len(users))
 
+		metric("restash_person_stored_bytes", "Space a person's PCs take together.", "gauge")
+		stored := map[string]int64{}
+		for _, p := range pcs {
+			stored[p.UserID] += s.sizes.size(p.ID)
+		}
+		for _, u := range users {
+			fmt.Fprintf(&b, "restash_person_stored_bytes{owner=\"%s\"} %d\n", esc(u.Name), stored[u.ID])
+		}
+		metric("restash_person_limit_bytes", "A person's storage limit (0: none).", "gauge")
+		for _, u := range users {
+			fmt.Fprintf(&b, "restash_person_limit_bytes{owner=\"%s\"} %d\n", esc(u.Name), u.StorageLimit)
+		}
+
 		metric("restash_pc_online", "1 if the PC's agent is connected.", "gauge")
 		for _, p := range pcs {
 			fmt.Fprintf(&b, "restash_pc_online%s %d\n", labels(p.Name, owner[p.UserID]), boolInt(s.hub.online(p.ID)))

@@ -187,3 +187,10 @@ const (
 	TypeRestoreState = "restore-status"
 	TypeBackupState  = "backup-status" // a backup's progress (agent → server)
 )
+
+// Storage is how much a person's PCs take together, and their limit (0:
+// none). Agents check it before each backup.
+type Storage struct {
+	Used  int64 `json:"used"`
+	Limit int64 `json:"limit"`
+}

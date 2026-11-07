@@ -115,6 +115,14 @@ docker compose logs restash | grep signup   # link for the admin account
 People join by invite link (People → Invite someone). restash doesn't send
 email; you send the link yourself.
 
+The admin can give each person a storage limit (People → the size under
+Stored). It covers all of that person's PCs, counts the encrypted backups
+as they sit on the server (not the trash), and shows on their Your PCs
+page. Over the limit, their PCs don't start new backups; they record a
+failed run saying why and clean up old backups right away, only deleting
+data nothing uses so the cleanup itself needs no room. As a backstop the
+server refuses new backup data once someone is 10% past their limit.
+
 ## Agent
 
 On the PC, open **Add a PC** on the website and download restash. The file

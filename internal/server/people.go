@@ -16,6 +16,7 @@ type personJSON struct {
 	// Oldest last good backup among their PCs; nil if a PC never backed up.
 	OldestOK *time.Time `json:"oldestOk"`
 	AllSafe  bool       `json:"allSafe"`
+	Limit    int64      `json:"limit"`   // storage limit in bytes; 0: none
 	Problem  string     `json:"problem"` // worst problem among their PCs
 }
 
@@ -81,7 +82,7 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 	}
 	out := peopleJSON{People: []personJSON{}, Invites: []inviteJSON{}}
 	for _, u := range users {
-		p := personJSON{userJSON: toUserJSON(&u), CreatedAt: u.CreatedAt, PCs: len(byUser[u.ID]), AllSafe: len(byUser[u.ID]) > 0}
+		p := personJSON{userJSON: toUserJSON(&u), CreatedAt: u.CreatedAt, PCs: len(byUser[u.ID]), AllSafe: len(byUser[u.ID]) > 0, Limit: u.StorageLimit}
 		never := false
 		for _, pc := range byUser[u.ID] {
 			p.Stored += s.sizes.size(pc.ID)

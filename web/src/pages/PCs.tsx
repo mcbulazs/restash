@@ -1,8 +1,8 @@
-import { api, type PC } from "../api.ts";
+import { api, type PC, type Storage } from "../api.ts";
 import { bytes, daysBetween, percentText, shortDate, when } from "../format.ts";
 import { Link } from "../router.tsx";
 import { ErrorBox, Icon, Legend, nights, Tally, useLoad } from "../components/ui.tsx";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { schedulesSummary } from "../entries.ts";
 
 
@@ -56,8 +56,42 @@ function statusLine(pc: PC): string {
   return "Offline";
 }
 
+/** Shown when the admin set a limit: how much of it is used. */
+function StorageUse({ s }: { s: Storage }) {
+  const pct = Math.min(100, (100 * s.used) / s.limit);
+  const full = s.used >= s.limit;
+  const near = !full && pct >= 90;
+  return (
+    <div className={`card card-pad storage-use ${full ? "full" : near ? "near" : ""}`}>
+      <div className="storage-use-top">
+        <h2>Storage</h2>
+        <span className="small">
+          {bytes(s.used)} of {bytes(s.limit)} used
+        </span>
+      </div>
+      <div className="space-bar" role="img" aria-label={`${Math.floor(pct)}% of your storage used`}>
+        <i style={{ width: `${pct}%` }} />
+      </div>
+      {full ? (
+        <p className="small fail-text">
+          You've reached your limit, so your PCs don't make new backups. They clean up old ones on their own; to back up again sooner, keep fewer old backups or
+          skip big folders in your entries, or ask the admin for more room.
+        </p>
+      ) : near ? (
+        <p className="small warn-text">Almost full. Once it's full, your PCs stop making new backups until there's room.</p>
+      ) : (
+        <p className="small">Your PCs share this space. The admin sets the limit.</p>
+      )}
+    </div>
+  );
+}
+
 export function PCsPage() {
   const { data: pcs, error, reload } = useLoad(api.pcs);
+  const [storage, setStorage] = useState<Storage | null>(null);
+  useEffect(() => {
+    api.storage().then(setStorage, () => {});
+  }, [pcs]);
   useEffect(() => {
     const t = setInterval(reload, 30_000);
     return () => clearInterval(t);
@@ -77,6 +111,7 @@ export function PCsPage() {
         </Link>
       </div>
       <ErrorBox error={error} />
+      {storage && storage.limit > 0 && <StorageUse s={storage} />}
       {pcs.length === 0 ? (
         <div className="card empty">
           <h2>No PCs yet</h2>

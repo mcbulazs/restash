@@ -841,7 +841,61 @@ button {
 
 /* ---------- People ---------- */
 .people-grid {
-  grid-template-columns: minmax(220px, 1.6fr) 110px 70px 110px minmax(150px, 1fr);
+  grid-template-columns: minmax(220px, 1.6fr) 110px 70px 130px minmax(150px, 1fr);
+}
+
+.people-grid .col-stored {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.limit-link {
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.limit-link-narrow {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .limit-link-narrow {
+    display: inline;
+  }
+}
+
+.limit-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.limit-input .input {
+  width: 110px;
+}
+
+.storage-use-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.storage-use .space-bar {
+  margin: 14px 0 12px;
+}
+
+.storage-use .space-bar i {
+  background: var(--cobalt);
+}
+
+.storage-use.near .space-bar i {
+  background: var(--ochre);
+}
+
+.storage-use.full .space-bar i {
+  background: var(--rust);
 }
 
 .person {

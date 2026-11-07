@@ -154,6 +154,9 @@ var migrations = []string{
 		user_id    TEXT NOT NULL,
 		started_at INTEGER NOT NULL
 	);`,
+
+	// Storage limit per person, set by the admin; 0 means none.
+	`ALTER TABLE users ADD COLUMN storage_limit INTEGER NOT NULL DEFAULT 0;`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

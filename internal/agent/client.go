@@ -109,6 +109,12 @@ func (c *Client) OtherPCs(ctx context.Context) ([]proto.OtherPC, error) {
 	return out, c.do(ctx, "GET", "/api/agent/pcs", nil, &out)
 }
 
+// Storage is how much the owner's PCs store, and their limit.
+func (c *Client) Storage(ctx context.Context) (proto.Storage, error) {
+	var out proto.Storage
+	return out, c.do(ctx, "GET", "/api/agent/storage", nil, &out)
+}
+
 // ReportBackup sends a backup result.
 func (c *Client) ReportBackup(ctx context.Context, r proto.BackupReport) error {
 	return c.do(ctx, "POST", "/api/agent/backups", r, nil)

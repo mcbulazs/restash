@@ -20,6 +20,7 @@ type User struct {
 	AccountKey         string // locked with the password's wrap key
 	RecoveryAuthHash   string
 	RecoveryAccountKey string // locked with the recovery code's wrap key
+	StorageLimit       int64  // bytes all their PCs may take together; 0: no limit
 	CreatedAt          time.Time
 }
 
@@ -32,13 +33,13 @@ type Credentials struct {
 }
 
 const userCols = `id, email, name, is_admin, kdf_salt, kdf_iterations, auth_hash,
-	account_key, recovery_auth_hash, recovery_account_key, created_at`
+	account_key, recovery_auth_hash, recovery_account_key, storage_limit, created_at`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var created int64
 	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Admin, &u.KDFSalt, &u.KDFIterations, &u.AuthHash,
-		&u.AccountKey, &u.RecoveryAuthHash, &u.RecoveryAccountKey, &created)
+		&u.AccountKey, &u.RecoveryAuthHash, &u.RecoveryAccountKey, &u.StorageLimit, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -80,6 +81,18 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
+// SetStorageLimit sets how much a person's PCs may store; 0 removes the limit.
+func (s *Store) SetStorageLimit(ctx context.Context, userID string, limit int64) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE users SET storage_limit = ? WHERE id = ?", max(limit, 0), userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // CountUsers says how many accounts exist.
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
@@ -119,9 +132,9 @@ func (s *Store) CreateUser(ctx context.Context, inviteToken string, u *User) err
 	u.ID = newID()
 	u.Admin = admin
 	u.CreatedAt = s.now()
-	_, err = tx.ExecContext(ctx, "INSERT INTO users("+userCols+") VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+	_, err = tx.ExecContext(ctx, "INSERT INTO users("+userCols+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
 		u.ID, u.Email, u.Name, u.Admin, u.KDFSalt, u.KDFIterations, u.AuthHash,
-		u.AccountKey, u.RecoveryAuthHash, u.RecoveryAccountKey, unix(u.CreatedAt))
+		u.AccountKey, u.RecoveryAuthHash, u.RecoveryAccountKey, u.StorageLimit, unix(u.CreatedAt))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return ErrEmailTaken

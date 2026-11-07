@@ -234,19 +234,32 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 	errs := &tail{}
 	r := *rn.restic
 	r.Stdout, r.Stderr = nil, errs
-	rn.tell(proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "running"})
-	var lastSent time.Time
-	progress := func(p restic.BackupProgress) {
-		if time.Since(lastSent) < 2*time.Second {
-			return
+	var sum *restic.Summary
+	var err error
+	// Over the storage limit: don't upload, say why. (If the server can't be
+	// asked, back up anyway; the server has the last word.)
+	limited := ""
+	qctx, qcancel := context.WithTimeout(ctx, 30*time.Second)
+	st, qerr := rn.client.Storage(qctx)
+	qcancel()
+	if qerr == nil && st.Limit > 0 && st.Used >= st.Limit {
+		limited = LimitMessage(st)
+		slog.Warn("storage limit reached; not backing up", "entry", e.ID, "used", st.Used, "limit", st.Limit)
+	} else {
+		rn.tell(proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "running"})
+		var lastSent time.Time
+		progress := func(p restic.BackupProgress) {
+			if time.Since(lastSent) < 2*time.Second {
+				return
+			}
+			lastSent = time.Now()
+			rn.tell(proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "running",
+				Percent: p.Percent, Files: p.FilesDone, TotalFiles: p.TotalFiles, Bytes: p.BytesDone, TotalBytes: p.TotalBytes, ETA: p.SecondsRemaining})
 		}
-		lastSent = time.Now()
-		rn.tell(proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "running",
-			Percent: p.Percent, Files: p.FilesDone, TotalFiles: p.TotalFiles, Bytes: p.BytesDone, TotalBytes: p.TotalBytes, ETA: p.SecondsRemaining})
-	}
-	sum, err := r.Backup(ctx, restic.BackupOptions{Paths: e.Paths, Tags: []string{"entry:" + e.ID}, Excludes: e.Skips, Progress: progress})
-	if ctx.Err() != nil {
-		return // shutting down; try again next time
+		sum, err = r.Backup(ctx, restic.BackupOptions{Paths: e.Paths, Tags: []string{"entry:" + e.ID}, Excludes: e.Skips, Progress: progress})
+		if ctx.Err() != nil {
+			return // shutting down; try again next time
+		}
 	}
 
 	report := proto.BackupReport{Entry: e.ID, StartedAt: started, FinishedAt: rn.now(), OK: sum != nil}
@@ -258,6 +271,8 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 			detail = "Some files couldn't be read and were skipped:\n" + strings.Join(firstN(restic.Messages(errs.String()), 10), "\n")
 		}
 		slog.Info("backup done", "entry", e.ID, "files", sum.TotalFilesProcessed, "added", sum.DataAddedPacked)
+	case limited != "":
+		detail = limited
 	default:
 		msgs := restic.Messages(errs.String())
 		if len(msgs) == 0 && err != nil {
@@ -287,8 +302,13 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 	rn.state.LastRun[e.ID] = started
 	rn.mu.Unlock()
 
-	if sum != nil {
+	// Over the limit, cleaning up old backups is how space comes back, so
+	// it happens right away, not once a day.
+	if sum != nil || limited != "" {
 		rn.applyRetention(ctx, e)
+	}
+	if limited != "" {
+		rn.prune(ctx, true)
 	}
 	rn.saveState()
 }
@@ -324,10 +344,27 @@ func (rn *Runner) maybePrune(ctx context.Context) {
 	if !need {
 		return
 	}
-	slog.Info("cleaning up data of old backups")
+	rn.prune(ctx, false)
+}
+
+// prune cleans up data of removed snapshots. tight is for when the owner is
+// over their storage limit: only data nothing uses is deleted and nothing is
+// rewritten, since the server may refuse new data then.
+func (rn *Runner) prune(ctx context.Context, tight bool) {
+	rn.mu.Lock()
+	need := rn.state.PruneNeeded
+	rn.mu.Unlock()
+	if !need {
+		return
+	}
+	slog.Info("cleaning up data of old backups", "tight", tight)
 	r := *rn.restic
 	r.Stdout, r.Stderr = nil, nil
-	if err := r.Run(ctx, "prune"); err != nil {
+	args := []string{"prune"}
+	if tight {
+		args = append(args, "--max-unused", "unlimited")
+	}
+	if err := r.Run(ctx, args...); err != nil {
 		slog.Warn("clean-up failed; trying again later", "err", err)
 		return
 	}
@@ -398,4 +435,22 @@ func (st State) Save(path string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// LimitMessage explains a backup skipped for the storage limit.
+func LimitMessage(st proto.Storage) string {
+	return fmt.Sprintf("Storage limit reached: %s of %s used, so nothing was backed up. "+
+		"Ask the admin for more room, or free some by keeping fewer old backups or skipping folders.", gb(st.Used), gb(st.Limit))
+}
+
+// gb is a size like the website shows it (1 GB = 1000 MB).
+func gb(b int64) string {
+	switch {
+	case b >= 1e12:
+		return fmt.Sprintf("%.1f TB", float64(b)/1e12)
+	case b >= 1e9:
+		return fmt.Sprintf("%.1f GB", float64(b)/1e9)
+	default:
+		return fmt.Sprintf("%.0f MB", float64(b)/1e6)
+	}
 }

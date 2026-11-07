@@ -7,6 +7,7 @@ const SPACE_COLORS = ["var(--cobalt)", "var(--green)", "var(--ochre)", "var(--co
 
 function Status({ p }: { p: Person }) {
   if (p.pcs === 0) return <span className="status-dot hollow status-quiet">No PCs yet</span>;
+  if (p.limit > 0 && p.stored >= p.limit) return <span className="status-dot hollow status-warn">At its storage limit</span>;
   if (p.allSafe) return <span className="status-dot status-good">All backed up</span>;
   if (p.problem === "failed") return <span className="status-dot fail-text">A backup failed</span>;
   if (p.problem === "late") return <span className="status-dot hollow status-warn">A backup is late</span>;
@@ -61,9 +62,64 @@ function InviteForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** The admin sets how much one person's PCs may store together. */
+function LimitEditor({ p, onDone }: { p: Person; onDone: () => void }) {
+  const [gb, setGb] = useState(p.limit > 0 ? String(Math.round(p.limit / 1e8) / 10) : "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const save = (limit: number) => {
+    setBusy(true);
+    setError(null);
+    api.setLimit(p.id, limit).then(onDone, (e) => {
+      setError(e);
+      setBusy(false);
+    });
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const n = Number(gb.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) {
+      setError(new Error("Type a size in GB, like 50."));
+      return;
+    }
+    save(Math.round(n * 1e9));
+  };
+  const first = p.name.split(" ")[0];
+  return (
+    <div className="card card-pad">
+      <h2>Storage limit for {p.name}</h2>
+      <p className="muted" style={{ marginBottom: 18 }}>
+        All of {first}'s PCs together. They use {bytes(p.stored)} now. Over the limit, their PCs stop making new backups and clean up old ones instead,
+        until there's room again.
+      </p>
+      <form className="invite-form" onSubmit={submit}>
+        <label className="limit-input">
+          <input className="input" inputMode="decimal" aria-label="Limit in GB" value={gb} onChange={(e) => setGb(e.target.value)} autoFocus placeholder="50" />
+          <span>GB</span>
+        </label>
+        <button className="btn btn-primary" disabled={busy}>
+          Save
+        </button>
+        {p.limit > 0 && (
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => save(0)}>
+            Remove the limit
+          </button>
+        )}
+        <button type="button" className="btn btn-link" onClick={onDone}>
+          Cancel
+        </button>
+        <div style={{ flexBasis: "100%" }}>
+          <ErrorBox error={error} />
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function PeoplePage() {
   const { data, error, reload } = useLoad(api.people);
   const [inviting, setInviting] = useState(false);
+  const [editing, setEditing] = useState("");
 
   if (!data) return <div className="page">{error ? <ErrorBox error={error} /> : <div className="loading">Loading…</div>}</div>;
   const n = data.people.length;
@@ -106,6 +162,10 @@ export function PeoplePage() {
               <div>
                 <div className="cell-title truncate">{p.name}</div>
                 <div className="cell-sub truncate">{p.email}</div>
+                {/* On phones the Stored column is hidden; the limit lives here. */}
+                <button className="link-button limit-link limit-link-narrow" onClick={() => setEditing(p.id)}>
+                  {bytes(p.stored)} {p.limit > 0 ? `of ${bytes(p.limit)}` : ", no limit"}
+                </button>
               </div>
             </div>
             <span className="col-role cell-main" style={{ fontWeight: 400 }}>
@@ -114,13 +174,29 @@ export function PeoplePage() {
             <span className="col-pcs cell-main" style={{ fontWeight: 400 }}>
               {p.pcs}
             </span>
-            <span className="col-stored cell-main" style={{ fontWeight: 400 }}>
-              {bytes(p.stored)}
+            <span className="col-stored">
+              <span className="cell-main" style={{ fontWeight: 400 }}>
+                {bytes(p.stored)}
+              </span>
+              <button className="link-button limit-link" title="Change the storage limit" onClick={() => setEditing(p.id)}>
+                {p.limit > 0 ? `of ${bytes(p.limit)}` : "No limit"}
+              </button>
             </span>
             <Status p={p} />
           </div>
         ))}
       </div>
+
+      {editing && data.people.some((p) => p.id === editing) && (
+        <LimitEditor
+          key={editing}
+          p={data.people.find((p) => p.id === editing)!}
+          onDone={() => {
+            setEditing("");
+            reload();
+          }}
+        />
+      )}
 
       {data.invites.length > 0 && (
         <div className="card card-pad">

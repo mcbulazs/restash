@@ -131,6 +131,13 @@ export interface Person extends User {
   oldestOk: string | null;
   allSafe: boolean;
   problem: "" | "failed" | "late" | "quiet";
+  limit: number; // storage limit in bytes, 0: none
+}
+
+/** How much someone's PCs take together, and their limit (0: none). */
+export interface Storage {
+  used: number;
+  limit: number;
 }
 
 export interface ActivityItem {
@@ -248,6 +255,8 @@ export const api = {
   restoreStatus: (pc: string, job: string) => call<RestoreJobStatus>("GET", `/api/pcs/${encodeURIComponent(pc)}/restores/${encodeURIComponent(job)}`),
 
   people: () => call<People>("GET", "/api/people"),
+  setLimit: (person: string, limit: number) => call<void>("PUT", `/api/people/${encodeURIComponent(person)}/limit`, { limit }),
+  storage: () => call<Storage>("GET", "/api/storage"),
   createInvite: (email: string) => call<Invite>("POST", "/api/invites", { email }),
   deleteInvite: (token: string) => call<void>("DELETE", "/api/invites/" + encodeURIComponent(token)),
 };

@@ -121,6 +121,8 @@ func (s *Server) Handler() http.Handler {
 
 	// Admin
 	mux.Handle("GET /api/people", s.admin(s.handlePeople))
+	mux.Handle("PUT /api/people/{id}/limit", s.admin(s.handleSetLimit))
+	mux.Handle("GET /api/storage", s.user(s.handleStorage))
 	mux.Handle("POST /api/invites", s.admin(s.handleCreateInvite))
 	mux.Handle("DELETE /api/invites/{token}", s.admin(s.handleDeleteInvite))
 
@@ -131,6 +133,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/agent/backups", s.agent(s.handleAgentBackup))
 	mux.Handle("GET /api/agent/entries", s.agent(s.handleAgentEntries))
 	mux.Handle("GET /api/agent/pcs", s.agent(s.handleAgentPCs))
+	mux.Handle("GET /api/agent/storage", s.agent(s.handleAgentStorage))
 	mux.Handle("GET /api/agent/ws", s.agent(s.handleAgentWS))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, http.StatusNotFound, "not found") })

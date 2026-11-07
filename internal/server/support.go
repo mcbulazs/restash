@@ -45,6 +45,10 @@ func (s *Server) repoAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if self && growsRepo(r) && s.overLimit(r.Context(), userID) {
+			http.Error(w, "storage limit reached", http.StatusInsufficientStorage)
+			return
+		}
 		if !self {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				http.Error(w, "read only", http.StatusForbidden)
