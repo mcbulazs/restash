@@ -121,10 +121,6 @@ jobs:
           restic_version=$(awk '$1 == "version" { print $2 }' scripts/restic.sha256)
           curl -fsSL -o dist/restic-LICENSE.txt "https://raw.githubusercontent.com/restic/restic/v${restic_version}/LICENSE"
           (cd dist && sha256sum * > SHA256SUMS)
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          subject-path: dist/restash-agent-*
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -134,3 +130,9 @@ jobs:
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --generate-notes
           gh release upload "$TAG" dist/* -R "$GITHUB_REPOSITORY" --clobber
+      # After publishing, so a Sigstore outage can't hold up the release
+      # (the job still fails, and the run can be re-run to add it).
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          subject-path: dist/restash-agent-*
