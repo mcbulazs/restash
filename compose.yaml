@@ -1,0 +1,76 @@
+# Server setup: put this file in one folder (e.g. /mnt/data/tools/restash)
+# and create the storage folders, owned by the user both containers run as:
+#
+#   mkdir -p storage/repos storage/trash storage/auth
+#   chown -R 65532:65532 storage
+#
+# Add a storage user (repos live under /repo/<username>/):
+#
+#   docker compose exec rest-server create_user <username>
+services:
+  restash:
+    image: ghcr.io/mcbulazs/restash:latest
+    container_name: restash
+    restart: unless-stopped
+    environment:
+      RESTASH_REST_SERVER_URL: http://rest-server:8000
+      # Deleted backup files stay in storage/trash this many days.
+      RESTASH_TRASH_DAYS: 30
+    volumes:
+      # One mount for repos and trash, so deletes are plain renames.
+      - ./storage:/storage
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD", "/restash-server", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - rest-server
+    networks:
+      - traefik
+      - storage
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.restash.rule=Host(`restash.bulazs.com`)"
+      - "traefik.http.routers.restash.entrypoints=websecure"
+      - "traefik.http.services.restash.loadbalancer.server.port=8080"
+      - "dashboard.name=restash"
+
+  # Only reachable through restash, which turns deletes into moves to the
+  # trash. It checks logins, and --private-repos keeps each user in their
+  # own /<username>/ folder.
+  rest-server:
+    image: restic/rest-server:0.14.0
+    container_name: restash-rest-server
+    restart: unless-stopped
+    user: "65532:65532"
+    environment:
+      DATA_DIRECTORY: /data
+      PASSWORD_FILE: /auth/.htpasswd
+      OPTIONS: --private-repos
+    volumes:
+      - ./storage/repos:/data
+      - ./storage/auth:/auth
+    read_only: true
+    tmpfs:
+      - /tmp # create_user needs it
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 100
+    networks:
+      - storage
+    labels:
+      - "dashboard.group=restash"
+
+networks:
+  storage:
+    internal: true # no outside access; only restash talks to rest-server
+  traefik:
+    external: true

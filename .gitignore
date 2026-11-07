@@ -1,0 +1,5 @@
+/restash-server
+/restash-agent
+/dist/
+/storage/
+.env
