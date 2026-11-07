@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -30,6 +31,14 @@ import (
 	"github.com/mcbulazs/restash/internal/vault"
 )
 
+// lastPassword holds the password typed during join for a moment, so the
+// offer to bring back another PC's files doesn't ask for it twice.
+var lastPassword string
+
+func apiClient(cfg *agent.Config) *agent.Client {
+	return agent.NewClient(cfg.Server, cfg.PCID, cfg.Token)
+}
+
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
@@ -40,6 +49,7 @@ commands:
   unlock     type your password again to unlock this PC's backups
   run        stay linked and back up entries on their schedules
   entries    list this PC's entries and when they run next
+  pull       bring back another of your PCs' files onto this one
   backup     back up folders
   snapshots  list backups
   restore    restore a backup into a folder
@@ -56,6 +66,7 @@ var commands = map[string]command{
 	"unlock":    cmdUnlock,
 	"run":       cmdRun,
 	"entries":   cmdEntries,
+	"pull":      cmdPull,
 	"backup":    cmdBackup,
 	"snapshots": cmdSnapshots,
 	"restore":   cmdRestore,
@@ -155,6 +166,9 @@ func unlock(ctx context.Context, cfgPath string, cfg *agent.Config, email string
 			return err
 		}
 		err = agent.Unlock(ctx, cfg, pw, r)
+		if err == nil {
+			lastPassword = pw
+		}
 		if errors.Is(err, agent.ErrWrongPassword) && try < 3 && os.Getenv("RESTASH_ACCOUNT_PASSWORD") == "" {
 			fmt.Fprintln(os.Stderr, "That password didn't work. Try again.")
 			continue
@@ -195,6 +209,23 @@ func cmdJoin(ctx context.Context, cfgPath string, args []string) error {
 	if err := unlock(ctx, cfgPath, cfg, res.Email); err != nil {
 		return fmt.Errorf("%w\nThe PC is linked; run `restash-agent unlock` to try again", err)
 	}
+	// A new PC after another one died: offer to bring its files back.
+	if others, err := apiClient(cfg).OtherPCs(ctx); err == nil && len(others) > 0 && term.IsTerminal(int(os.Stdin.Fd())) {
+		if pw := lastPassword; pw != "" {
+			if accountKey, _, err := agent.AccountKey(ctx, apiClient(cfg), pw); err == nil {
+				fmt.Fprintln(os.Stderr, "\nThis PC is new to restash, but your account has backups of other PCs.")
+				home, _ := os.UserHomeDir()
+				r, rerr := newRestic(cfg)
+				if rerr == nil {
+					if err := pullFrom(ctx, cfgPath, cfg, r, others, accountKey, "", "", home); err != nil {
+						fmt.Fprintln(os.Stderr, "Couldn't bring the files back:", err)
+					}
+				}
+			}
+		}
+	}
+	lastPassword = ""
+
 	fmt.Fprintln(os.Stderr, "\nAll set. Pick folders to back up on the website, on this PC's page.")
 	fmt.Fprintln(os.Stderr, "Keep `restash-agent run` going so backups happen on their schedules.")
 	return nil
@@ -251,7 +282,119 @@ func cmdRun(ctx context.Context, cfgPath string, args []string) error {
 			go rn.RunNow(entry)
 		},
 		OnBrowse: func(data string) (string, error) { return agent.AnswerBrowse(entryKey, cfg.PCID, data) },
+		OnRestore: func(id, data string, send func(proto.Message)) {
+			slog.Info("restoring files", "job", id)
+			rn.HandleRestore(ctx, id, data, send)
+			slog.Info("restore finished", "job", id)
+		},
 	})
+}
+
+func cmdPull(ctx context.Context, cfgPath string, args []string) error {
+	fs := flag.NewFlagSet("pull", flag.ExitOnError)
+	home, _ := os.UserHomeDir()
+	into := fs.String("into", "", "folder to put the files in (default: <home>/Restored from <PC>)")
+	from := fs.String("from", "", "name of the PC to bring back (asked if not given)")
+	fs.Parse(args)
+	cfg, r, err := load(cfgPath)
+	if err != nil {
+		return err
+	}
+	c := agent.NewClient(cfg.Server, cfg.PCID, cfg.Token)
+	others, err := c.OtherPCs(ctx)
+	if err != nil {
+		return err
+	}
+	if len(others) == 0 {
+		return errors.New("there are no other PCs with backups in your account")
+	}
+	acc, err := c.Account(ctx)
+	if err != nil {
+		return err
+	}
+	var accountKey []byte
+	for try := 1; ; try++ {
+		pw, err := readPassword(acc.Email)
+		if err != nil {
+			return err
+		}
+		accountKey, _, err = agent.AccountKey(ctx, c, pw)
+		if errors.Is(err, agent.ErrWrongPassword) && try < 3 && os.Getenv("RESTASH_ACCOUNT_PASSWORD") == "" {
+			fmt.Fprintln(os.Stderr, "That password didn't work. Try again.")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		break
+	}
+	return pullFrom(ctx, cfgPath, cfg, r, others, accountKey, *from, *into, home)
+}
+
+// pullFrom asks which PC to bring back (unless from names one), then
+// restores the newest backup of each of its entries.
+func pullFrom(ctx context.Context, cfgPath string, cfg *agent.Config, r *restic.Restic, others []proto.OtherPC, accountKey []byte, from, into, home string) error {
+	var pick *proto.OtherPC
+	for i := range others {
+		if strings.EqualFold(others[i].Name, from) {
+			pick = &others[i]
+		}
+	}
+	if pick == nil {
+		if from != "" {
+			return fmt.Errorf("no PC called %q in your account", from)
+		}
+		fmt.Fprintln(os.Stderr, "\nWhich PC's files do you want to bring back?")
+		for i, o := range others {
+			last := "no backups yet"
+			if o.LastBackup != nil {
+				last = "last backup " + o.LastBackup.Local().Format("Jan 2 15:04")
+			}
+			fmt.Fprintf(os.Stderr, "  %d. %s (%s, %s, %s)\n", i+1, o.Name, o.OS, last, size(o.Stored))
+		}
+		fmt.Fprint(os.Stderr, "Number, or Enter to skip: ")
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" {
+			fmt.Fprintln(os.Stderr, "Skipped. You can do this later with `restash-agent pull`.")
+			return nil
+		}
+		n := 0
+		fmt.Sscan(line, &n)
+		if n < 1 || n > len(others) {
+			return errors.New("no such number")
+		}
+		pick = &others[n-1]
+	}
+	key, err := agent.OtherPCKey(accountKey, *pick)
+	if err != nil {
+		return fmt.Errorf("can't unlock %s's backup: %w", pick.Name, err)
+	}
+	rn, err := agent.NewRunner(cfg, agent.StatePath(cfgPath), r)
+	if err != nil {
+		return err
+	}
+	plan, err := rn.PlanPull(ctx, pick.ID, key)
+	if err != nil {
+		return err
+	}
+	if len(plan.Snapshots) == 0 {
+		return fmt.Errorf("%s has no backups yet", pick.Name)
+	}
+	if into == "" {
+		into = filepath.Join(home, "Restored from "+pick.Name)
+	}
+	fmt.Fprintf(os.Stderr, "\nBringing back %s's newest backups into %s\n", pick.Name, into)
+	err = rn.Pull(ctx, pick.ID, key, plan, into, func(done, total int, folder string) {
+		if folder != "" {
+			fmt.Fprintf(os.Stderr, "  [%d/%d] %s\n", done+1, total, folder)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Done. Everything is in %s\n", into)
+	return nil
 }
 
 func cmdEntries(ctx context.Context, cfgPath string, args []string) error {

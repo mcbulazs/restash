@@ -8,6 +8,8 @@ const SPACE_COLORS = ["var(--cobalt)", "var(--green)", "var(--ochre)", "var(--co
 function Status({ p }: { p: Person }) {
   if (p.pcs === 0) return <span className="status-dot hollow status-quiet">No PCs yet</span>;
   if (p.allSafe) return <span className="status-dot status-good">All backed up</span>;
+  if (p.problem === "failed") return <span className="status-dot fail-text">A backup failed</span>;
+  if (p.problem === "late") return <span className="status-dot hollow status-warn">A backup is late</span>;
   if (!p.oldestOk) return <span className="status-dot hollow status-warn">Not backed up yet</span>;
   const days = daysBetween(new Date(p.oldestOk), new Date());
   return <span className="status-dot hollow status-warn">Quiet for {days} day{days === 1 ? "" : "s"}</span>;

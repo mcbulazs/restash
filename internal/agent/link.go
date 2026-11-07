@@ -21,6 +21,7 @@ type LinkHandler struct {
 	OnEntries func()                            // entries changed
 	OnRun     func(entry string)                // back up now ("" for all)
 	OnBrowse  func(data string) (string, error) // folder listing request
+	OnRestore func(id, data string, send func(proto.Message))
 }
 
 // RunLink keeps a websocket open to the server, reconnecting with backoff,
@@ -92,6 +93,18 @@ func linkOnce(ctx context.Context, cfg *Config, version string, h LinkHandler) e
 			if h.OnRun != nil {
 				h.OnRun(msg.Entry)
 			}
+		case proto.TypeRestore:
+			if h.OnRestore == nil {
+				continue
+			}
+			send := func(m proto.Message) {
+				wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				writeMu.Lock()
+				defer writeMu.Unlock()
+				wsjson.Write(wctx, c, m)
+			}
+			go h.OnRestore(msg.ID, msg.Data, send)
 		case proto.TypeBrowse:
 			if h.OnBrowse == nil {
 				continue

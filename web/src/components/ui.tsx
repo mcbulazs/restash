@@ -85,6 +85,17 @@ export const Icon = {
       <path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z" />
     </Svg>
   ),
+  check: () => (
+    <Svg>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Svg>
+  ),
+  key: () => (
+    <Svg>
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11 12l8-8M16 7l2 2M14 9l2 2" />
+    </Svg>
+  ),
   refresh: () => (
     <Svg>
       <path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v5h5" />
@@ -166,6 +177,7 @@ export function TopBar({ user, onLogout }: { user: User; onLogout: () => void })
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
   const nav = [{ href: "/", label: "Your PCs", active: path === "/" || path.startsWith("/add") || path.startsWith("/pcs/") }];
+  nav.push({ href: "/activity", label: "Activity", active: path.startsWith("/activity") });
   if (user.admin) nav.push({ href: "/people", label: "People", active: path.startsWith("/people") });
   return (
     <header className="topbar">

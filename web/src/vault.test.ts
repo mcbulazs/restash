@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { entryKey, fromB64, labelPCKey, newRecoveryCode, open, passwordKeys, recoveryKeys, seal, toB64, LockedError } from "./vault.ts";
+import { pcPassword, entryKey, fromB64, labelPCKey, newRecoveryCode, open, passwordKeys, recoveryKeys, seal, toB64, LockedError } from "./vault.ts";
 
 const v = JSON.parse(readFileSync(new URL("../../internal/vault/testdata/vectors.json", import.meta.url), "utf8"));
 
@@ -35,4 +35,8 @@ test("new recovery codes are valid", async () => {
 
 test("entry key matches Go", async () => {
   assert.equal(toB64(await entryKey(fromB64(v.sealKey))), v.entryKey);
+});
+
+test("restic password matches Go", () => {
+  assert.equal(pcPassword(fromB64(v.sealKey)), v.pcPassword);
 });

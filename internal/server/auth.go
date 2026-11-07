@@ -139,15 +139,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "wrong email or password")
 		return
 	}
-	s.startSession(w, r, u)
+	s.startSession(w, r, u, false)
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User) {
+// startSession logs the person in. firstLogin skips the new-browser
+// alert (right after signup every browser is new).
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u *store.User, firstLogin bool) {
 	tok, err := s.store.CreateSession(r.Context(), u.ID)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
+	s.noteDevice(w, r, u, firstLogin)
 	s.setSession(w, tok)
 	writeJSON(w, http.StatusOK, loginResponse{User: toUserJSON(u), AccountKey: u.AccountKey})
 }
@@ -268,7 +271,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	s.startSession(w, r, u)
+	s.startSession(w, r, u, true)
 }
 
 type recoverKeyRequest struct {
@@ -336,5 +339,5 @@ func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.AccountKey = creds.AccountKey
-	s.startSession(w, r, u)
+	s.startSession(w, r, u, false)
 }

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,10 +23,13 @@ import (
 )
 
 type env struct {
-	t     *testing.T
-	srv   *httptest.Server
-	store *store.Store
-	rest  []string // requests that reached rest-server
+	t      *testing.T
+	srv    *httptest.Server
+	server *Server
+	ntfyMu sync.Mutex
+	ntfy   []string // messages the fake ntfy got: "topic|title"
+	store  *store.Store
+	rest   []string // requests that reached rest-server
 }
 
 func newEnv(t *testing.T) *env {
@@ -43,17 +47,41 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(rest.Close)
 	restURL, _ := url.Parse(rest.URL)
 	pub, _ := url.Parse("http://restash.test")
+	ntfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.ntfyMu.Lock()
+		e.ntfy = append(e.ntfy, strings.TrimPrefix(r.URL.Path, "/")+"|"+r.Header.Get("Title"))
+		e.ntfyMu.Unlock()
+	}))
+	t.Cleanup(ntfy.Close)
 	s, err := New(context.Background(), Config{
-		PublicURL: pub, Store: st,
+		NtfyServer: ntfy.URL,
+		PublicURL:  pub, Store: st,
 		Repos:    trash.NewProxy(restURL, filepath.Join(dir, "repos"), filepath.Join(dir, "trash")),
 		ReposDir: filepath.Join(dir, "repos"), Storage: dir,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.server = s
 	e.srv = httptest.NewServer(s.Handler())
 	t.Cleanup(e.srv.Close)
 	return e
+}
+
+// sent waits briefly for n ntfy messages and returns them.
+func (e *env) sent(n int) []string {
+	for i := 0; i < 100; i++ {
+		e.ntfyMu.Lock()
+		got := append([]string{}, e.ntfy...)
+		e.ntfyMu.Unlock()
+		if len(got) >= n {
+			return got
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	e.ntfyMu.Lock()
+	defer e.ntfyMu.Unlock()
+	return append([]string{}, e.ntfy...)
 }
 
 func (e *env) now() time.Time { return time.Now() }
@@ -268,44 +296,68 @@ func TestRepoAuth(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	inv, _ := e.store.SetupInvite(ctx)
-	e.signup(e.client(), inv.Token, "a@example.com", "pw")
+	anna := e.client()
+	e.signup(anna, inv.Token, "a@example.com", "pw")
 	users, _ := e.store.Users(ctx)
 	code, _, _ := e.store.CreateJoinCode(ctx, users[0].ID)
 	pc, token, _ := e.store.Join(ctx, code, store.PC{Name: "x"})
 	code2, _, _ := e.store.CreateJoinCode(ctx, users[0].ID)
 	pc2, _, _ := e.store.Join(ctx, code2, store.PC{Name: "y"})
 
-	try := func(user, pass, path string) int {
-		req, _ := http.NewRequest("GET", e.srv.URL+path, nil)
+	inv2, _ := e.store.CreateInvite(ctx, "b@example.com", false, users[0].ID, store.InviteLength)
+	bob := e.client()
+	e.signup(bob, inv2.Token, "b@example.com", "pw")
+	bobUser, _ := e.store.UserByEmail(ctx, "b@example.com")
+	code3, _, _ := e.store.CreateJoinCode(ctx, bobUser.ID)
+	bobPC, bobToken, _ := e.store.Join(ctx, code3, store.PC{Name: "z"})
+
+	try := func(c *http.Client, method, user, pass, path string) int {
+		req, _ := http.NewRequest(method, e.srv.URL+path, nil)
 		if user != "" {
 			req.SetBasicAuth(user, pass)
 		}
-		resp, err := http.DefaultTransport.RoundTrip(req)
+		if c == nil {
+			c = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		}
+		resp, err := c.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		return resp.StatusCode
 	}
+	noRedirect := func(c *http.Client) *http.Client {
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		return c
+	}
 	cases := []struct {
-		user, pass, path string
-		want             int
+		name               string
+		client             *http.Client
+		method, user, pass string
+		path               string
+		want               int
 	}{
-		{pc.ID, token, "/repo/" + pc.ID + "/config", 200},
-		{pc.ID, token, "/repo/" + pc.ID + "/", 200},
-		{"", "", "/repo/" + pc.ID + "/config", 401},
-		{pc.ID, "wrong", "/repo/" + pc.ID + "/config", 401},
-		{pc.ID, token, "/repo/" + pc2.ID + "/config", 403},
-		{pc.ID, token, "/repo/", 403},
-		{pc.ID, token, "/repo/" + pc.ID + "/../" + pc2.ID + "/config", 307}, // redirected to the clean path, then refused
-		{pc.ID, token, "/repo/" + pc.ID + "%2F..%2F" + pc2.ID + "/config", 403},
+		{"own repo", nil, "GET", pc.ID, token, "/repo/" + pc.ID + "/config", 200},
+		{"own repo write", nil, "POST", pc.ID, token, "/repo/" + pc.ID + "/locks/x", 200},
+		{"no login", nil, "GET", "", "", "/repo/" + pc.ID + "/config", 401},
+		{"wrong token", nil, "GET", pc.ID, "wrong", "/repo/" + pc.ID + "/config", 401},
+		{"sibling read", nil, "GET", pc.ID, token, "/repo/" + pc2.ID + "/config", 200},
+		{"sibling write", nil, "POST", pc.ID, token, "/repo/" + pc2.ID + "/locks/x", 403},
+		{"sibling delete", nil, "DELETE", pc.ID, token, "/repo/" + pc2.ID + "/snapshots/x", 403},
+		{"other person's repo", nil, "GET", bobPC.ID, bobToken, "/repo/" + pc.ID + "/config", 403},
+		{"root", nil, "GET", pc.ID, token, "/repo/", 403},
+		{"dot dot", nil, "GET", bobPC.ID, bobToken, "/repo/" + bobPC.ID + "/../" + pc.ID + "/config", 307}, // cleaned by the router, then checked again
+		{"encoded slash", nil, "GET", pc.ID, token, "/repo/" + pc.ID + "%2F..%2F" + pc2.ID + "/config", 403},
+		{"browser read", noRedirect(anna), "GET", "", "", "/repo/" + pc.ID + "/config", 200},
+		{"browser write", noRedirect(anna), "POST", "", "", "/repo/" + pc.ID + "/locks/x", 403},
+		{"browser, other person", noRedirect(bob), "GET", "", "", "/repo/" + pc.ID + "/config", 403},
 	}
 	for _, c := range cases {
-		if got := try(c.user, c.pass, c.path); got != c.want {
-			t.Errorf("%s as %q: got %d, want %d", c.path, c.user, got, c.want)
+		if got := try(c.client, c.method, c.user, c.pass, c.path); got != c.want {
+			t.Errorf("%s: %s %s got %d, want %d", c.name, c.method, c.path, got, c.want)
 		}
 	}
-	if len(e.rest) != 2 {
+	if len(e.rest) != 4 {
 		t.Fatalf("rest-server saw %v", e.rest)
 	}
 }

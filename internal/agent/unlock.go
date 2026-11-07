@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mcbulazs/restash/internal/proto"
 	"github.com/mcbulazs/restash/internal/restic"
 	"github.com/mcbulazs/restash/internal/vault"
 )
@@ -16,22 +17,7 @@ import (
 // The password and unlocked keys never leave this PC.
 func Unlock(ctx context.Context, cfg *Config, password string, r *restic.Restic) error {
 	c := NewClient(cfg.Server, cfg.PCID, cfg.Token)
-	acc, err := c.Account(ctx)
-	if err != nil {
-		return err
-	}
-	salt, err := base64.StdEncoding.DecodeString(acc.KDFSalt)
-	if err != nil {
-		return errors.New("the server sent a bad salt")
-	}
-	keys, err := vault.PasswordKeys(password, salt, acc.KDFIterations)
-	if err != nil {
-		return err
-	}
-	accountKey, err := vault.Open(keys.Wrap, acc.AccountKey, vault.LabelAccountKey)
-	if errors.Is(err, vault.ErrLocked) {
-		return ErrWrongPassword
-	}
+	accountKey, acc, err := AccountKey(ctx, c, password)
 	if err != nil {
 		return err
 	}
@@ -71,6 +57,36 @@ func Unlock(ctx context.Context, cfg *Config, password string, r *restic.Restic)
 		}
 	}
 	return nil
+}
+
+// AccountKey unlocks the owner's account key with their password.
+func AccountKey(ctx context.Context, c *Client, password string) ([]byte, *proto.Account, error) {
+	acc, err := c.Account(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	salt, err := base64.StdEncoding.DecodeString(acc.KDFSalt)
+	if err != nil {
+		return nil, nil, errors.New("the server sent a bad salt")
+	}
+	keys, err := vault.PasswordKeys(password, salt, acc.KDFIterations)
+	if err != nil {
+		return nil, nil, err
+	}
+	accountKey, err := vault.Open(keys.Wrap, acc.AccountKey, vault.LabelAccountKey)
+	if errors.Is(err, vault.ErrLocked) {
+		return nil, nil, ErrWrongPassword
+	}
+	return accountKey, acc, err
+}
+
+// OtherPCKey opens another PC's restic password with the account key.
+func OtherPCKey(accountKey []byte, pc proto.OtherPC) (string, error) {
+	k, err := vault.Open(accountKey, pc.PCKey, vault.LabelPCKey(pc.ID))
+	if err != nil {
+		return "", err
+	}
+	return vault.PCPassword(k), nil
 }
 
 // ErrWrongPassword means the password didn't unlock the account key.

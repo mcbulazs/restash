@@ -16,6 +16,16 @@ type personJSON struct {
 	// Oldest last good backup among their PCs; nil if a PC never backed up.
 	OldestOK *time.Time `json:"oldestOk"`
 	AllSafe  bool       `json:"allSafe"`
+	Problem  string     `json:"problem"` // worst problem among their PCs
+}
+
+// worse picks the more serious of two problem kinds.
+func worse(a, b string) string {
+	rank := map[string]int{"": 0, "late": 1, "quiet": 2, "failed": 3}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
 }
 
 type inviteJSON struct {
@@ -60,6 +70,11 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
+	states, _, err := s.statuses(ctx)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
 	byUser := map[string][]store.PC{}
 	for _, p := range pcs {
 		byUser[p.UserID] = append(byUser[p.UserID], p)
@@ -80,8 +95,9 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 				tt := t
 				p.OldestOK = &tt
 			}
-			if s.now().Sub(t) > safeWindow {
+			if states[pc.ID].Problem != "" {
 				p.AllSafe = false
+				p.Problem = worse(p.Problem, states[pc.ID].Problem)
 			}
 		}
 		if never {

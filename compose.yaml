@@ -17,6 +17,13 @@ services:
       RESTASH_REST_SERVER_URL: http://rest-server:8000
       # Deleted backup files stay in storage/trash this many days.
       RESTASH_TRASH_DAYS: 30
+      # restash's own ntfy alerts are off: the homelab dashboard alerts
+      # on backups from the metrics below. To have restash alert each
+      # person on their own topic instead, set an ntfy server here.
+      # RESTASH_NTFY_SERVER: https://ntfy.sh
+      # Prometheus metrics (per PC: online, last backup, size, problems).
+      # Only reachable on the monitoring network, not through Traefik.
+      RESTASH_METRICS_LISTEN: ":9464"
     volumes:
       # Database, repos and trash. One mount, so deletes are plain renames.
       - ./storage:/storage
@@ -35,6 +42,7 @@ services:
     networks:
       - traefik
       - storage
+      - monitoring # Prometheus scrapes restash:9464/metrics
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
@@ -69,4 +77,6 @@ networks:
   storage:
     internal: true # no outside access; only restash talks to rest-server
   traefik:
+    external: true
+  monitoring:
     external: true

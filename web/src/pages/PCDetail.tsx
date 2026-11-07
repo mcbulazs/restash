@@ -129,10 +129,17 @@ export function PCDetailPage({ id }: { id: string }) {
           <h1 style={{ marginTop: 6 }}>{pc.name}</h1>
           <p className="lede">{summary}</p>
         </div>
-        {pc.ready && entries.length > 0 && (
-          <button className="btn btn-secondary btn-tall" onClick={() => runNow()}>
-            Back up everything now
-          </button>
+        {pc.ready && (
+          <div className="hero-actions">
+            {entries.length > 0 && (
+              <button className="btn btn-secondary btn-tall" onClick={() => runNow()}>
+                Back up everything now
+              </button>
+            )}
+            <Link href={`/pcs/${pc.id}/restore`} className="btn btn-primary">
+              <Icon.refresh /> Restore files
+            </Link>
+          </div>
         )}
       </div>
       {note && (note.ok ? <div className="note-ok">{note.text}</div> : <ErrorBox error={new Error(note.text)} />)}

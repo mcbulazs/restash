@@ -42,6 +42,48 @@ days, then one a month for 2 years"). They're set up on the PC's page.
   once a day and lands in the server's trash.
 - A run missed while the PC was off happens as soon as it's back on.
 
+## Restoring
+
+- **In any browser:** a PC's page has **Restore files**. The page loads a
+  small restic reader (Go compiled to WebAssembly, built by
+  `scripts/build-wasm.sh`), fetches the encrypted backup from the server
+  and decrypts it right there. You can browse, search, and download files
+  or a .zip, even if the PC is gone. The server only ever hands out
+  encrypted data.
+- **Onto a PC:** from the same page, restore next to the originals (copies
+  get "(restored Nov 7)" added to their names) or into a folder you pick on
+  any of your PCs. The request travels locked to that PC, which does the
+  restoring.
+- **A PC died:** on the new PC, `restash-agent join` offers to bring back
+  another of your PCs' files, or run `restash-agent pull` later. It asks
+  for your password, unlocks the old PC's key and restores the newest
+  backup of each of its entries into `Restored from <PC>`.
+
+A PC can read (never write) the backups of its owner's other PCs; a
+logged-in browser can read its owner's backups. Writing stays limited to
+each PC's own repo.
+
+## Alerts and status
+
+The server checks every few minutes whether each entry is **failed** (its
+last run failed), **late** (a scheduled run is over an hour overdue while
+the PC was on) or whether a PC is **quiet** (no good backup for 3 days).
+Problems show on the PC list, People and **Activity**, which also lists
+backups, failures, restores, downloads and logins.
+
+Alerts to [ntfy](https://ntfy.sh) are off unless `RESTASH_NTFY_SERVER` is
+set. With it, each new problem is announced once to the owner's topic, and
+the admin's, and recoveries are announced too. New logins from an unknown
+browser are announced the same way, and a weekly summary can be turned on.
+People set their topic and what they want under Activity. Without it, a
+monitoring system can alert from the metrics below instead.
+
+Alerts name PCs, never entries or files: the server can't read those.
+
+`RESTASH_METRICS_LISTEN` (e.g. `:9464`) serves Prometheus metrics per PC:
+online, last good backup, stored size and problems. Keep it off the
+public site.
+
 ## Server
 
 The server runs in Docker next to restic's
@@ -67,6 +109,8 @@ docker compose logs restash | grep signup   # link for the admin account
 | `RESTASH_STORAGE`         | `/storage`                | Folder holding the database, repos, trash |
 | `RESTASH_DB`              | `$RESTASH_STORAGE/restash.db` | SQLite database                       |
 | `RESTASH_TRASH_DAYS`      | `30`                      | Days deleted files stay in the trash      |
+| `RESTASH_NTFY_SERVER`     | (off)                     | ntfy server for alerts, e.g. `https://ntfy.sh` |
+| `RESTASH_METRICS_LISTEN`  | (off)                     | Address for Prometheus metrics            |
 
 People join by invite link (People → Invite someone). restash doesn't send
 email; you send the link yourself.
@@ -85,6 +129,7 @@ repo. Then:
 ```sh
 restash-agent run                    # stay linked and back up entries on schedule
 restash-agent entries                # list entries and when they run next
+restash-agent pull                   # bring back another PC's files
 restash-agent backup -exclude node_modules ~/Documents ~/Projects
 restash-agent snapshots
 restash-agent restore -target ~/restored latest
@@ -110,6 +155,7 @@ prompt, for scripts.
 ## Building
 
 ```sh
+scripts/build-wasm.sh
 (cd web && npm ci && npm test && npm run build)
 go test ./...
 go build ./cmd/restash-server

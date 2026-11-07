@@ -5,11 +5,9 @@ import (
 	"time"
 
 	"github.com/mcbulazs/restash/internal/schedule"
+	"github.com/mcbulazs/restash/internal/status"
 	"github.com/mcbulazs/restash/internal/store"
 )
-
-// A PC counts as safe if it backed up within this long.
-const safeWindow = 48 * time.Hour
 
 type runJSON struct {
 	At time.Time `json:"at"`
@@ -31,6 +29,8 @@ type pcJSON struct {
 	Stored       int64               `json:"stored"`
 	Recent       []runJSON           `json:"recent"` // last 30 days, oldest first
 	Schedules    []schedule.Schedule `json:"schedules"`
+	Problem      string              `json:"problem"` // failed, quiet, late or ""
+	Problems     []status.Problem    `json:"problems"`
 }
 
 func ptr(t time.Time, ok bool) *time.Time {
@@ -54,6 +54,10 @@ func (s *Server) describePCs(r *http.Request, pcs []store.PC) ([]pcJSON, error) 
 	if err != nil {
 		return nil, err
 	}
+	states, _, err := s.statuses(r.Context())
+	if err != nil {
+		return nil, err
+	}
 	out := make([]pcJSON, 0, len(pcs))
 	for _, p := range pcs {
 		l, hasL := last[p.ID]
@@ -65,6 +69,10 @@ func (s *Server) describePCs(r *http.Request, pcs []store.PC) ([]pcJSON, error) 
 			LastBackup: ptr(l, hasL), LastOK: ptr(lo, hasLO),
 			Stored: s.sizes.size(p.ID),
 			Recent: []runJSON{}, Schedules: []schedule.Schedule{},
+			Problem: states[p.ID].Problem, Problems: states[p.ID].Problems,
+		}
+		if j.Problems == nil {
+			j.Problems = []status.Problem{}
 		}
 		for _, e := range entries[p.ID] {
 			j.Schedules = append(j.Schedules, e.Schedule)

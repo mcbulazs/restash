@@ -126,6 +126,34 @@ var migrations = []string{
 		updated_at INTEGER NOT NULL
 	);
 	CREATE INDEX entries_pc ON entries(pc_id);`,
+
+	`ALTER TABLE users ADD COLUMN ntfy_topic TEXT NOT NULL DEFAULT '';
+	ALTER TABLE users ADD COLUMN notify_fail INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE users ADD COLUMN notify_quiet INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE users ADD COLUMN notify_login INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE users ADD COLUMN notify_weekly INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE events (
+		id      INTEGER PRIMARY KEY,
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		pc_id   TEXT,
+		kind    TEXT NOT NULL,
+		at      INTEGER NOT NULL,
+		info    TEXT NOT NULL DEFAULT '{}',
+		secret  TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX events_user_at ON events(user_id, at);
+	CREATE TABLE devices (
+		user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		device     TEXT NOT NULL,
+		first_seen INTEGER NOT NULL,
+		last_seen  INTEGER NOT NULL,
+		PRIMARY KEY (user_id, device)
+	);
+	CREATE TABLE alerts (
+		key        TEXT PRIMARY KEY,
+		user_id    TEXT NOT NULL,
+		started_at INTEGER NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

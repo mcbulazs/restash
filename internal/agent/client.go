@@ -103,6 +103,12 @@ func (c *Client) Entries(ctx context.Context) ([]proto.Entry, error) {
 	return out, c.do(ctx, "GET", "/api/agent/entries", nil, &out)
 }
 
+// OtherPCs lists the owner's other PCs that have backups.
+func (c *Client) OtherPCs(ctx context.Context) ([]proto.OtherPC, error) {
+	var out []proto.OtherPC
+	return out, c.do(ctx, "GET", "/api/agent/pcs", nil, &out)
+}
+
 // ReportBackup sends a backup result.
 func (c *Client) ReportBackup(ctx context.Context, r proto.BackupReport) error {
 	return c.do(ctx, "POST", "/api/agent/backups", r, nil)

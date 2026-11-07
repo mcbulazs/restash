@@ -4,3 +4,4 @@
 .env
 web/node_modules
 web/dist
+web/wasm

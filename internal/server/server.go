@@ -26,18 +26,24 @@ type Config struct {
 	Storage   string       // the storage folder, for free space
 	Web       fs.FS        // the built web UI; nil to serve none
 	Version   string       //
-	Now       func() time.Time
+	// NtfyServer is where alerts go, e.g. https://ntfy.sh; empty turns
+	// alerts off. People only choose a topic on it.
+	NtfyServer string
+	Now        func() time.Time
 }
 
 // Server handles all HTTP requests.
 type Server struct {
-	cfg      Config
-	store    *store.Store
-	hub      *hub
-	sizes    *sizeCache
-	limits   *limiter
-	fakeSalt []byte
-	now      func() time.Time
+	cfg       Config
+	store     *store.Store
+	hub       *hub
+	sizes     *sizeCache
+	limits    *limiter
+	restores  restoreJobs
+	notify    *notifier
+	pokeCheck chan struct{}
+	fakeSalt  []byte
+	now       func() time.Time
 }
 
 // New builds a Server.
@@ -58,7 +64,16 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		limits:   newLimiter(),
 		fakeSalt: secret,
 		now:      now,
+		notify: &notifier{server: cfg.NtfyServer, client: &http.Client{Timeout: 15 * time.Second}, store: cfg.Store,
+			site: strings.TrimSuffix(cfg.PublicURL.String(), "/") + "/activity"},
+		pokeCheck: make(chan struct{}, 1),
 	}, nil
+}
+
+// Run does the server's background work (checking for late, failed and
+// quiet backups) until ctx is cancelled.
+func (s *Server) Run(ctx context.Context) {
+	s.runChecker(ctx)
 }
 
 // Handler returns the root HTTP handler.
@@ -76,6 +91,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/recover/key", s.handleRecoverKey)
 	mux.HandleFunc("POST /api/auth/recover", s.handleRecover)
 	mux.Handle("GET /api/me", s.user(s.handleMe))
+	mux.Handle("GET /api/activity", s.user(s.handleActivity))
+	mux.Handle("POST /api/activity/download", s.user(s.handleDownloaded))
+	mux.Handle("GET /api/notify", s.user(s.handleGetNotify))
+	mux.Handle("PUT /api/notify", s.user(s.handleSetNotify))
+	mux.Handle("POST /api/notify/test", s.user(s.handleTestNotify))
 
 	// PCs
 	mux.Handle("GET /api/pcs", s.user(s.handlePCs))
@@ -87,6 +107,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/pcs/{pc}/entries/{entry}", s.user(s.handleDeleteEntry))
 	mux.Handle("POST /api/pcs/{pc}/run", s.user(s.handleRunNow))
 	mux.Handle("POST /api/pcs/{pc}/browse", s.user(s.handleBrowse))
+	mux.Handle("POST /api/pcs/{pc}/restore", s.user(s.handleRestore))
+	mux.Handle("GET /api/pcs/{pc}/restores/{job}", s.user(s.handleRestoreStatus))
 
 	// Admin
 	mux.Handle("GET /api/people", s.admin(s.handlePeople))
@@ -99,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/agent/key", s.agent(s.handleAgentSetKey))
 	mux.Handle("POST /api/agent/backups", s.agent(s.handleAgentBackup))
 	mux.Handle("GET /api/agent/entries", s.agent(s.handleAgentEntries))
+	mux.Handle("GET /api/agent/pcs", s.agent(s.handleAgentPCs))
 	mux.Handle("GET /api/agent/ws", s.agent(s.handleAgentWS))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, http.StatusNotFound, "not found") })
@@ -122,7 +145,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		if !strings.HasPrefix(r.URL.Path, "/repo/") {
-			h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+			h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 			h.Set("X-Frame-Options", "DENY")
 		}
 		next.ServeHTTP(w, r)

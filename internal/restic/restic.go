@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Repo says where a repo lives and how to open it.
@@ -249,4 +250,94 @@ func Messages(stderr string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// Snapshot is one entry of `restic snapshots --json`.
+type Snapshot struct {
+	ID    string    `json:"id"`
+	Time  time.Time `json:"time"`
+	Paths []string  `json:"paths"`
+	Tags  []string  `json:"tags"`
+}
+
+// Snapshots lists the repo's snapshots, oldest first. With noLock, the
+// repo isn't locked (for reading someone else's repo read-only).
+func (r *Restic) Snapshots(ctx context.Context, noLock bool) ([]Snapshot, error) {
+	args := []string{"snapshots", "--json"}
+	if noLock {
+		args = append([]string{"--no-lock"}, args...)
+	}
+	var out, errs bytes.Buffer
+	c := r.cmd(ctx, args...)
+	c.Stdout, c.Stderr = &out, &errs
+	if err := c.Run(); err != nil {
+		return nil, fmt.Errorf("listing backups: %w: %s", err, strings.Join(Messages(errs.String()), " "))
+	}
+	var list []Snapshot
+	return list, json.Unmarshal(out.Bytes(), &list)
+}
+
+// RestoreProgress is how far a restore is.
+type RestoreProgress struct {
+	Percent     float64 `json:"percent_done"`
+	TotalFiles  int64   `json:"total_files"`
+	FilesDone   int64   `json:"files_restored"`
+	TotalBytes  int64   `json:"total_bytes"`
+	BytesDone   int64   `json:"bytes_restored"`
+	MessageType string  `json:"message_type"`
+}
+
+// Restore restores from a snapshot ("id" or "id:/folder") into target,
+// limited to the include patterns if any. Errors restic reports go to
+// r.Stderr. With noLock, the repo isn't locked.
+func (r *Restic) Restore(ctx context.Context, snapshot, target string, includes []string, noLock bool, progress func(RestoreProgress)) error {
+	args := []string{"restore", snapshot, "--target", target, "--json"}
+	if noLock {
+		args = append([]string{"--no-lock"}, args...)
+	}
+	for _, i := range includes {
+		args = append(args, "--include", i)
+	}
+	c := r.cmd(ctx, args...)
+	out, err := c.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := c.Start(); err != nil {
+		return err
+	}
+	errOut := r.Stderr
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var p RestoreProgress
+		if json.Unmarshal(sc.Bytes(), &p) != nil {
+			continue
+		}
+		switch p.MessageType {
+		case "status", "summary":
+			if p.MessageType == "summary" {
+				p.Percent = 1
+			}
+			if progress != nil {
+				progress(p)
+			}
+		case "error":
+			var e struct {
+				Item  string `json:"item"`
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			json.Unmarshal(sc.Bytes(), &e)
+			fmt.Fprintf(errOut, "%s: %s\n", e.Item, e.Error.Message)
+		}
+	}
+	if err := c.Wait(); err != nil {
+		return fmt.Errorf("restic restore: %w", err)
+	}
+	return nil
 }

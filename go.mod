@@ -4,6 +4,8 @@ go 1.27
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/klauspost/compress v1.20.3
+	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.62.0
 )

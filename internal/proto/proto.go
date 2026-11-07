@@ -136,9 +136,39 @@ type Message struct {
 	Timezone string `json:"timezone,omitempty"`
 	// run (server → agent): an entry id, or "" for all
 	Entry string `json:"entry,omitempty"`
-	// browse (server → agent) and browse-result (agent → server)
+	// browse, restore (server → agent); browse-result, restore-status
+	// (agent → server)
 	ID   string `json:"id,omitempty"`
-	Data string `json:"data,omitempty"` // locked BrowseRequest / BrowseResult
+	Data string `json:"data,omitempty"` // locked request or answer
+	// restore-status: how far a restore is
+	State   string  `json:"state,omitempty"` // running, done, failed
+	Percent float64 `json:"percent,omitempty"`
+	Files   int64   `json:"files,omitempty"`
+	Bytes   int64   `json:"bytes,omitempty"`
+}
+
+// RestoreJob asks a PC to restore files. It travels locked with the target
+// PC's entry key, since it names files and folders.
+type RestoreJob struct {
+	SourcePC    string   `json:"sourcePc"`    // PC whose backup it is
+	SourceKey   string   `json:"sourceKey"`   // its restic password, if not this PC
+	Snapshot    string   `json:"snapshot"`    // snapshot id
+	Dir         string   `json:"dir"`         // folder inside the backup the names are in
+	Names       []string `json:"names"`       // what to restore from Dir
+	OriginalDir string   `json:"originalDir"` // where Dir was on the source PC
+	Mode        string   `json:"mode"`        // "originals" or "folder"
+	Target      string   `json:"target"`      // for "folder": where to put it
+	Label       string   `json:"label"`       // e.g. "restored Nov 7", for names
+}
+
+// OtherPC is another PC of the same owner, offered when pulling files.
+type OtherPC struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	OS         string     `json:"os"`
+	PCKey      string     `json:"pcKey"` // locked with the account key
+	LastBackup *time.Time `json:"lastBackup"`
+	Stored     int64      `json:"stored"`
 }
 
 // Message types.
@@ -148,4 +178,6 @@ const (
 	TypeRun          = "run"     // back up now
 	TypeBrowse       = "browse"
 	TypeBrowseResult = "browse-result"
+	TypeRestore      = "restore"
+	TypeRestoreState = "restore-status"
 )

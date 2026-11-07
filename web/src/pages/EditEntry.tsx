@@ -378,7 +378,7 @@ export function EditEntryPage({ pcID, entryID }: { pcID: string; entryID: string
   );
 }
 
-function FolderPicker({ pc, entryKey, onClose, onPick }: { pc: PCDetail; entryKey: Uint8Array; onClose: () => void; onPick: (path: string) => void }) {
+export function FolderPicker({ pc, entryKey, onClose, onPick }: { pc: Pick<PCDetail, "id" | "name" | "os">; entryKey: Uint8Array; onClose: () => void; onPick: (path: string) => void }) {
   const [res, setRes] = useState<BrowseResult | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<unknown>(null);

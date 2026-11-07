@@ -10,24 +10,51 @@ import (
 	"time"
 )
 
-// repoAuth checks the agent's login on restic's requests: the username is
-// the PC id, the password its token, and it may only touch /<pc id>/.
+// repoAuth decides who may touch which restic repo (/<pc id>/...):
+//   - a PC, logging in with its id and token, may do anything in its own
+//     repo, and may read (never write) the repos of its owner's other PCs,
+//     so a new PC can bring back a dead one's files;
+//   - a logged-in browser may read its owner's repos, to browse and
+//     download them (decrypting in the page).
 func (s *Server) repoAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, token, ok := r.BasicAuth()
-		if !ok {
+		target, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if r.URL.RawPath != "" || target == "" || !strings.HasPrefix(r.URL.Path, "/"+target+"/") ||
+			path.Clean(r.URL.Path) != strings.TrimSuffix(r.URL.Path, "/") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		var userID string
+		self := false
+		if id, token, ok := r.BasicAuth(); ok {
+			pc, err := s.store.AuthPC(r.Context(), id, token)
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			userID, self = pc.UserID, pc.ID == target
+		} else if c, err := r.Cookie(sessionCookie); err == nil {
+			u, err := s.store.SessionUser(r.Context(), c.Value)
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			userID = u.ID
+		} else {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restash"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		pc, err := s.store.AuthPC(r.Context(), id, token)
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if r.URL.RawPath != "" || !strings.HasPrefix(r.URL.Path, "/"+pc.ID+"/") || path.Clean(r.URL.Path) != strings.TrimSuffix(r.URL.Path, "/") {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
+		if !self {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				http.Error(w, "read only", http.StatusForbidden)
+				return
+			}
+			pc, err := s.store.PCByID(r.Context(), target)
+			if err != nil || pc.UserID != userID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -41,8 +68,19 @@ func webHandler(dist fs.FS) http.Handler {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if name != "" && name != "index.html" {
 			if st, err := fs.Stat(dist, name); err == nil && !st.IsDir() {
+				// The WebAssembly reader is big; send the gzipped copy if there is one.
+				if strings.HasSuffix(name, ".wasm") && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+					if gz, err := fs.ReadFile(dist, name+".gz"); err == nil {
+						w.Header().Set("Content-Type", "application/wasm")
+						w.Header().Set("Content-Encoding", "gzip")
+						w.Header().Set("Vary", "Accept-Encoding")
+						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+						w.Write(gz)
+						return
+					}
+				}
 				// Built files have a content hash in their name.
-				if strings.Contains(name, "-") && (strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".css") || strings.HasSuffix(name, ".woff2")) {
+				if strings.Contains(name, "-") && (strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".css") || strings.HasSuffix(name, ".woff2") || strings.HasSuffix(name, ".wasm")) {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 				}
 				files.ServeHTTP(w, r)

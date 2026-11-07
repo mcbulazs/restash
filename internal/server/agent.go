@@ -159,6 +159,7 @@ func (s *Server) handleAgentBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sizes.forget(b.PCID)
+	s.poke()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -217,6 +218,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			s.store.HelloPC(context.Background(), pc.ID, clean(msg.Version, 40), tz)
 		case proto.TypeBrowseResult:
 			s.hub.deliver(pc.ID, msg.ID, msg.Data)
+		case proto.TypeRestoreState:
+			if job := s.restores.update(pc.ID, msg); job != nil && job.EventID != 0 {
+				s.finishRestoreEvent(job, pc.Name)
+			}
 		}
 	}
 }

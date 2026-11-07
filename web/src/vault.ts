@@ -83,6 +83,13 @@ export const labelPCKey = (pcID: string) => "restash pc key " + pcID;
 export const labelEntry = (pcID: string, entryID: string) => `restash entry ${pcID} ${entryID}`;
 export const labelRunDetail = (pcID: string) => "restash run detail " + pcID;
 export const labelBrowse = (pcID: string) => "restash browse " + pcID;
+export const labelRestore = (pcID: string) => "restash restore " + pcID;
+export const labelActivity = () => "restash activity";
+
+/** A PC's restic password: its raw key, base64url without padding. */
+export function pcPassword(pcKey: Uint8Array): string {
+  return toB64(pcKey).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 /** The key that locks a PC's entry settings and run details. */
 export function entryKey(pcKey: Uint8Array): Promise<Uint8Array> {

@@ -10,6 +10,8 @@ import { AddPCPage } from "./pages/AddPC.tsx";
 import { PeoplePage } from "./pages/People.tsx";
 import { PCDetailPage } from "./pages/PCDetail.tsx";
 import { EditEntryPage } from "./pages/EditEntry.tsx";
+import { RestorePage } from "./pages/Restore.tsx";
+import { ActivityPage } from "./pages/Activity.tsx";
 
 const PUBLIC = ["/login", "/signup", "/recover"];
 
@@ -36,7 +38,7 @@ function App() {
   }, [user, path, isPublic]);
 
   useEffect(() => {
-    const titles: Record<string, string> = { "/login": "Log in", "/signup": "Sign up", "/recover": "Recover", "/add": "Add a PC", "/people": "People" };
+    const titles: Record<string, string> = { "/login": "Log in", "/signup": "Sign up", "/recover": "Recover", "/add": "Add a PC", "/people": "People", "/activity": "Activity" };
     document.title = titles[path] ? `${titles[path]} · restash` : "restash";
   }, [path]);
 
@@ -55,9 +57,12 @@ function App() {
 
   let page;
   const pcMatch = path.match(/^\/pcs\/([a-z2-7]+)$/);
+  const restoreMatch = path.match(/^\/pcs\/([a-z2-7]+)\/restore$/);
   const entryMatch = path.match(/^\/pcs\/([a-z2-7]+)\/entries\/([a-z2-7]+|new)$/);
   if (path === "/add") page = <AddPCPage />;
+  else if (path === "/activity") page = <ActivityPage />;
   else if (pcMatch) page = <PCDetailPage key={pcMatch[1]} id={pcMatch[1]} />;
+  else if (restoreMatch) page = <RestorePage key={restoreMatch[1]} id={restoreMatch[1]} />;
   else if (entryMatch) page = <EditEntryPage key={entryMatch[2]} pcID={entryMatch[1]} entryID={entryMatch[2]} />;
   else if (path === "/people" && user.admin) page = <PeoplePage />;
   else page = <PCsPage />;

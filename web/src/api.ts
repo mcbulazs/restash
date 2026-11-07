@@ -66,6 +66,15 @@ export interface BrowseResult {
   error?: string;
 }
 
+export interface RestoreJobStatus {
+  id: string;
+  state: "sent" | "running" | "done" | "failed";
+  percent: number;
+  files: number;
+  bytes: number;
+  detail?: string; // locked
+}
+
 export interface PC {
   id: string;
   name: string;
@@ -81,6 +90,8 @@ export interface PC {
   stored: number;
   recent: Run[];
   schedules: Schedule[];
+  problem: "" | "failed" | "late" | "quiet";
+  problems: { kind: "failed" | "late" | "quiet"; pcId: string; entry?: string; since: string }[];
 }
 
 export interface PCDetail extends PC {
@@ -106,6 +117,32 @@ export interface Person extends User {
   stored: number;
   oldestOk: string | null;
   allSafe: boolean;
+  problem: "" | "failed" | "late" | "quiet";
+}
+
+export interface ActivityItem {
+  kind: "backups" | "failed" | "late" | "quiet" | "recovered" | "restore" | "download" | "login";
+  at: string;
+  pcId?: string;
+  pc?: string;
+  userId: string;
+  user: string;
+  mine: boolean;
+  entries?: string[];
+  count?: number;
+  added?: number;
+  detail?: string;
+  info?: Record<string, unknown>;
+  secret?: string;
+  pcKey?: string;
+}
+
+export interface NotifySettings {
+  topic: string;
+  fail: boolean;
+  quiet: boolean;
+  login: boolean;
+  weekly: boolean;
 }
 
 export interface Invite {
@@ -186,6 +223,15 @@ export const api = {
   deleteEntry: (pc: string, id: string) => call<void>("DELETE", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`),
   runNow: (pc: string, entry = "") => call<void>("POST", `/api/pcs/${encodeURIComponent(pc)}/run`, { entry }),
   browse: (pc: string, data: string) => call<{ data: string }>("POST", `/api/pcs/${encodeURIComponent(pc)}/browse`, { data }),
+
+  restore: (pc: string, data: string, from: string) =>
+    call<RestoreJobStatus>("POST", `/api/pcs/${encodeURIComponent(pc)}/restore?from=${encodeURIComponent(from)}`, { data }),
+  activity: () => call<{ items: ActivityItem[]; weekBackups: number; weekProblems: number }>("GET", "/api/activity"),
+  downloaded: (pcId: string, items: number, bytes: number, secret: string) => call<void>("POST", "/api/activity/download", { pcId, items, bytes, secret }),
+  notify: () => call<{ settings: NotifySettings; server: string; admin: boolean }>("GET", "/api/notify"),
+  setNotify: (n: NotifySettings) => call<void>("PUT", "/api/notify", n),
+  testNotify: () => call<void>("POST", "/api/notify/test"),
+  restoreStatus: (pc: string, job: string) => call<RestoreJobStatus>("GET", `/api/pcs/${encodeURIComponent(pc)}/restores/${encodeURIComponent(job)}`),
 
   people: () => call<People>("GET", "/api/people"),
   createInvite: (email: string) => call<Invite>("POST", "/api/invites", { email }),

@@ -5,16 +5,17 @@ import { ErrorBox, Icon, Legend, nights, Tally, useLoad } from "../components/ui
 import { useEffect } from "react";
 import { schedulesSummary } from "../entries.ts";
 
-const SAFE_MS = 48 * 3600_000;
 
-export function isSafe(pc: PC, now = Date.now()): boolean {
-  return !!pc.lastOk && now - new Date(pc.lastOk).getTime() < SAFE_MS;
+export function isSafe(pc: PC): boolean {
+  return pc.ready && !!pc.lastOk && !pc.problem;
 }
 
 /** Why a PC isn't safe, in one sentence. */
 function trouble(pc: PC, now = new Date()): string {
   if (!pc.ready) return `${pc.name} is waiting for its password.`;
-  if (!pc.lastOk) return `${pc.name} hasn't backed up yet.`;
+  if (pc.problem === "failed") return `A backup on ${pc.name} failed. Open it to see why.`;
+  if (pc.problem === "late") return `A backup on ${pc.name} is late, though it was on.`;
+  if (!pc.lastOk) return pc.schedules.length ? `${pc.name} hasn't backed up yet.` : `${pc.name} has nothing to back up yet. Pick some folders.`;
   const days = daysBetween(new Date(pc.lastOk), now);
   let s = `${pc.name} hasn't backed up in ${days} day${days === 1 ? "" : "s"}.`;
   if (!pc.online && pc.lastSeen) s += ` It was last online on ${shortDate(new Date(pc.lastSeen), now)}.`;
@@ -24,7 +25,8 @@ function trouble(pc: PC, now = new Date()): string {
 export function headline(pcs: PC[]): [string, string] {
   if (pcs.length === 0) return ["Let's back up your first PC.", "Add a PC and pick the folders that matter. It takes a few minutes."];
   const safe = pcs.filter((p) => isSafe(p));
-  const unsafe = pcs.filter((p) => !isSafe(p));
+  const rank = { failed: 0, quiet: 1, late: 2, "": 3 };
+  const unsafe = pcs.filter((p) => !isSafe(p)).sort((a, b) => rank[a.problem] - rank[b.problem]);
   const latest = pcs
     .map((p) => p.lastOk)
     .filter((t): t is string => !!t)
@@ -101,7 +103,9 @@ export function PCsPage() {
                     <Tally marks={nights(pc.recent, pc.createdAt)} />
                   </div>
                   <div>
-                    <div className={`cell-main ${late && pc.lastOk ? "warn-text" : ""}`}>{pc.lastOk ? when(pc.lastOk) : "Not yet"}</div>
+                    <div className={`cell-main ${pc.problem === "failed" ? "fail-text" : late && pc.lastOk ? "warn-text" : ""}`}>
+                      {pc.problem === "failed" ? "A backup failed" : pc.lastOk ? when(pc.lastOk) : "Not yet"}
+                    </div>
                     <div className="cell-sub">{statusLine(pc)}</div>
                   </div>
                   <div className="col-stored cell-main" style={{ fontWeight: 400 }}>

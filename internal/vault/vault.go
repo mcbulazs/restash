@@ -217,6 +217,9 @@ func LabelRunDetail(pcID string) string { return "restash run detail " + pcID }
 // LabelBrowse is the label for folder listings between browser and PC.
 func LabelBrowse(pcID string) string { return "restash browse " + pcID }
 
+// LabelRestore is the label for restore jobs and their reports.
+func LabelRestore(pcID string) string { return "restash restore " + pcID }
+
 // PCKeyFromPassword reverses PCPassword.
 func PCKeyFromPassword(p string) ([]byte, error) {
 	b, err := base64.RawURLEncoding.DecodeString(p)

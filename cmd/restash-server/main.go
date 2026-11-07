@@ -36,6 +36,8 @@ type config struct {
 	db         string
 	webDir     string
 	trashDays  int
+	ntfy       string
+	metrics    string
 }
 
 func env(key, def string) string {
@@ -61,6 +63,12 @@ func loadConfig() (config, error) {
 	c.storage = env("RESTASH_STORAGE", "/storage")
 	c.db = env("RESTASH_DB", filepath.Join(c.storage, "restash.db"))
 	c.webDir = os.Getenv("RESTASH_WEB_DIR")
+	// Alerts are opt-in: empty or "off" sends nothing.
+	c.ntfy = os.Getenv("RESTASH_NTFY_SERVER")
+	if c.ntfy == "off" {
+		c.ntfy = ""
+	}
+	c.metrics = os.Getenv("RESTASH_METRICS_LISTEN")
 	c.trashDays, err = strconv.Atoi(env("RESTASH_TRASH_DAYS", "30"))
 	if err != nil || c.trashDays < 1 {
 		return c, fmt.Errorf("RESTASH_TRASH_DAYS must be a number of days")
@@ -104,13 +112,14 @@ func run() error {
 		webFS = os.DirFS(cfg.webDir)
 	}
 	srv, err := server.New(ctx, server.Config{
-		PublicURL: cfg.publicURL,
-		Store:     st,
-		Repos:     trash.NewProxy(cfg.restServer, repos, trashDir),
-		ReposDir:  repos,
-		Storage:   cfg.storage,
-		Web:       webFS,
-		Version:   version,
+		PublicURL:  cfg.publicURL,
+		Store:      st,
+		Repos:      trash.NewProxy(cfg.restServer, repos, trashDir),
+		ReposDir:   repos,
+		Storage:    cfg.storage,
+		Web:        webFS,
+		Version:    version,
+		NtfyServer: cfg.ntfy,
 	})
 	if err != nil {
 		return err
@@ -124,6 +133,25 @@ func run() error {
 	}
 
 	go trash.RunJanitor(ctx, trashDir, time.Duration(cfg.trashDays)*24*time.Hour)
+	go srv.Run(ctx)
+
+	// Metrics go on their own address, which isn't published through the
+	// reverse proxy.
+	if cfg.metrics != "" {
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", srv.MetricsHandler())
+		ms := &http.Server{Addr: cfg.metrics, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			slog.Info("metrics listening", "addr", cfg.metrics)
+			if err := ms.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("metrics server", "err", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			ms.Close()
+		}()
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.listen,
