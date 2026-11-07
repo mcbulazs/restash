@@ -85,13 +85,7 @@ export function AddPCPage() {
             <span className="step-num">1</span>
             <div className="step-body">
               <h2>Download restash</h2>
-              <p className="muted">
-                We detected {b.label}. restash runs from a terminal for now, and needs{" "}
-                <a href="https://restic.net/#installation" target="_blank" rel="noreferrer">
-                  restic
-                </a>{" "}
-                installed (it does the actual backing up).
-              </p>
+              <p className="muted">We detected {b.label}. restash runs from a terminal for now. It's one file with everything it needs inside.</p>
               <a className="btn btn-primary btn-big" href={RELEASES + b.file}>
                 <Icon.download /> Download for {b.label}
               </a>

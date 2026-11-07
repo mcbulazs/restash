@@ -59,6 +59,11 @@ var commands = map[string]command{
 	"forget":    cmdForget,
 	"version": func(context.Context, string, []string) error {
 		fmt.Println("restash-agent", version, runtime.GOOS+"/"+runtime.GOARCH)
+		if v := restic.BundledVersion(); v != "" {
+			fmt.Println("restic", v, "(built in)")
+		} else {
+			fmt.Println("restic not built in; using the one installed on this PC")
+		}
 		return nil
 	},
 }

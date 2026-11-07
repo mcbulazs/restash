@@ -32,11 +32,19 @@ type Restic struct {
 	Stderr io.Writer
 }
 
-// Find looks for the restic binary: $RESTASH_RESTIC, next to this program,
-// then on the PATH.
+// Find returns the restic program to run: $RESTASH_RESTIC if set, else the
+// copy built into the agent (unpacked on first use), else one next to this
+// program or on the PATH.
 func Find() (string, error) {
 	if p := os.Getenv("RESTASH_RESTIC"); p != "" {
 		return p, nil
+	}
+	if len(bundledGz) > 0 {
+		dir, err := os.UserCacheDir()
+		if err != nil {
+			return "", err
+		}
+		return unpack(filepath.Join(dir, "restash"), bundledGz, strings.TrimSpace(bundledHash), BundledVersion())
 	}
 	name := "restic"
 	if runtime.GOOS == "windows" {
@@ -54,6 +62,10 @@ func Find() (string, error) {
 	}
 	return p, nil
 }
+
+// BundledVersion is the version of the restic built into the agent, or ""
+// if there is none.
+func BundledVersion() string { return strings.TrimSpace(bundledVersion) }
 
 // env builds restic's environment. RESTIC_* variables from the user's shell
 // are dropped so they can't point restic at another repo.

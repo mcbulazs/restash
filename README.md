@@ -71,8 +71,18 @@ restash-agent restore -target ~/restored latest
 restash-agent forget -tag entry:manual -keep-daily 7 -keep-monthly 12
 ```
 
-The agent needs `restic` on the PATH (or next to it, or set
-`RESTASH_RESTIC`). Its settings are saved to
+Release builds of the agent carry the official restic release inside
+(pinned and checked in [scripts/restic.sha256](scripts/restic.sha256)) and
+unpack it to the user's cache folder on first use. Builds without it look
+for `restic` next to the agent or on the PATH; `RESTASH_RESTIC` overrides
+both. To build one with restic inside:
+
+```sh
+scripts/fetch-restic.sh linux amd64
+go build -tags restic_bundled ./cmd/restash-agent
+```
+
+The agent's settings are saved to
 `<config dir>/restash/agent.json` (override with `RESTASH_CONFIG`), readable
 only by the current user. `RESTASH_ACCOUNT_PASSWORD` skips the password
 prompt, for scripts.
