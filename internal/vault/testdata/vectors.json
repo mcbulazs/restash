@@ -1,0 +1,17 @@
+{
+  "password": "correct horse battery staple ✓",
+  "salt": "MDEyMzQ1Njc4OWFiY2RlZg==",
+  "iterations": 1000,
+  "auth": "r+j49Ra8gcJL4f/jYqOSMyLiFOoTguwfwfGBvkd58II=",
+  "wrap": "4k7q6aTz8We/3DiVUFIb0gvP5V5t2SOk5ta10hxw7Hk=",
+  "recovery": "h3vd q8ln 2wkt-m7rc-9bxf-j5pz",
+  "recoveryAuth": "09HBbevdJNp14ZAWUqB/4otlkO9qXMDd/eJAMManUbw=",
+  "recoveryWrap": "LH2zu1q+S3S+3r48s1sZhpc94RmgAJZrdknyVvzd0+4=",
+  "sealKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "sealNonce": "CQkJCQkJCQkJCQkJ",
+  "sealLabel": "restash pc key pc123",
+  "sealPlain": "restic password",
+  "sealed": "CQkJCQkJCQkJCQkJVeD34NeT4RHBEbhPiZjH8gnZQaZFyL+ufxWI+pht5Q==",
+  "authHash": "66ad00f6cfc8ee506fb0ddf8bbf5986f3418886af58d3c40c5ff421d4fc3bb8e",
+  "pcPassword": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+}

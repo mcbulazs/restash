@@ -19,14 +19,13 @@ import (
 	"time"
 )
 
-// Proxy forwards restic's REST traffic to rest-server.
+// Proxy forwards restic's REST traffic to rest-server. Callers must check
+// the login and that the path belongs to the caller before it gets here.
 type Proxy struct {
-	upstream *url.URL
-	repos    string // folder rest-server serves the repos from
-	trash    string // folder deleted files are moved to
-	forward  *httputil.ReverseProxy
-	client   *http.Client
-	now      func() time.Time
+	repos   string // folder rest-server serves the repos from
+	trash   string // folder deleted files are moved to
+	forward *httputil.ReverseProxy
+	now     func() time.Time
 }
 
 // NewProxy builds a proxy for the rest-server at upstream. repos and trash
@@ -42,14 +41,7 @@ func NewProxy(upstream *url.URL, repos, trash string) *Proxy {
 			http.Error(w, "storage unavailable", http.StatusBadGateway)
 		},
 	}
-	return &Proxy{
-		upstream: upstream,
-		repos:    repos,
-		trash:    trash,
-		forward:  rp,
-		client:   &http.Client{Timeout: 30 * time.Second},
-		now:      time.Now,
-	}
+	return &Proxy{repos: repos, trash: trash, forward: rp, now: time.Now}
 }
 
 // File types in a restic repo, see the REST backend spec. Locks are
@@ -129,12 +121,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// rest-server checks the login and that the repo belongs to that user.
-	// Ask it whether this caller may see the file before touching it.
-	if status := p.authorize(r); status != http.StatusOK {
-		http.Error(w, http.StatusText(status), status)
-		return
-	}
 	if err := p.moveToTrash(o); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -146,27 +132,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("moved to trash", "repo", strings.Join(o.repo, "/"), "type", o.typ, "name", o.name)
 	w.WriteHeader(http.StatusOK)
-}
-
-// authorize sends a HEAD for the same file to rest-server with the caller's
-// credentials and returns the status it answers with.
-func (p *Proxy) authorize(r *http.Request) int {
-	u := *p.upstream
-	u.Path = strings.TrimSuffix(u.Path, "/") + r.URL.Path
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodHead, u.String(), nil)
-	if err != nil {
-		return http.StatusInternalServerError
-	}
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		req.Header.Set("Authorization", auth)
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		slog.Error("rest-server unreachable", "err", err)
-		return http.StatusBadGateway
-	}
-	resp.Body.Close()
-	return resp.StatusCode
 }
 
 // moveToTrash renames the file into trash/<day>/<repo...>/<type>/<name>.

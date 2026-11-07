@@ -1,36 +1,48 @@
 // restash-agent backs up folders on this PC to a restash server.
 //
-// For now it is run by hand:
-//
-//	restash-agent init -server https://restash.bulazs.com -user anna -password ...
-//	restash-agent backup ~/Documents
-//	restash-agent snapshots
+//	restash-agent join K7Q2MX          link this PC (code from "Add a PC")
+//	restash-agent run                  stay linked to the server
+//	restash-agent backup ~/Documents   back up folders
+//	restash-agent snapshots            list backups
 //	restash-agent restore -target ~/restored latest
 //	restash-agent forget -tag entry:manual -keep-daily 7
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/mcbulazs/restash/internal/agent"
+	"github.com/mcbulazs/restash/internal/proto"
 	"github.com/mcbulazs/restash/internal/restic"
 )
+
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
 
 const usage = `usage: restash-agent <command> [flags]
 
 commands:
-  init       connect this PC to a repo on the server (creates it if new)
+  join       link this PC to your account with the code from "Add a PC"
+  unlock     type your password again to unlock this PC's backups
+  run        stay linked to the server (shows the PC as online)
   backup     back up folders
   snapshots  list backups
   restore    restore a backup into a folder
   forget     remove old backups by retention rules
+  version    show the version
 
 Run "restash-agent <command> -h" for a command's flags.
 `
@@ -38,11 +50,17 @@ Run "restash-agent <command> -h" for a command's flags.
 type command func(ctx context.Context, cfgPath string, args []string) error
 
 var commands = map[string]command{
-	"init":      cmdInit,
+	"join":      cmdJoin,
+	"unlock":    cmdUnlock,
+	"run":       cmdRun,
 	"backup":    cmdBackup,
 	"snapshots": cmdSnapshots,
 	"restore":   cmdRestore,
 	"forget":    cmdForget,
+	"version": func(context.Context, string, []string) error {
+		fmt.Println("restash-agent", version, runtime.GOOS+"/"+runtime.GOARCH)
+		return nil
+	},
 }
 
 func main() {
@@ -63,7 +81,7 @@ func main() {
 		}
 		cfgPath = p
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := cmd(ctx, cfgPath, os.Args[2:]); err != nil {
 		fail(err)
@@ -83,75 +101,119 @@ func newRestic(cfg *agent.Config) (*restic.Restic, error) {
 	return &restic.Restic{Bin: bin, Repo: cfg.Repo(), Stdout: os.Stdout, Stderr: os.Stderr}, nil
 }
 
+// load reads the config and checks the PC is unlocked.
 func load(cfgPath string) (*agent.Config, *restic.Restic, error) {
 	cfg, err := agent.Load(cfgPath)
 	if err != nil {
 		return nil, nil, err
 	}
+	if cfg.RepoKey == "" {
+		return nil, nil, errors.New("this PC is linked but locked: run `restash-agent unlock`")
+	}
 	r, err := newRestic(cfg)
 	return cfg, r, err
 }
 
-func cmdInit(ctx context.Context, cfgPath string, args []string) error {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	server := fs.String("server", "https://restash.bulazs.com", "restash server URL")
-	user := fs.String("user", "", "storage username")
-	password := fs.String("password", os.Getenv("RESTASH_PASSWORD"), "storage password (or $RESTASH_PASSWORD)")
-	repo := fs.String("repo", "", "repo path on the server (default: the username)")
-	key := fs.String("key", os.Getenv("RESTASH_KEY"), "key of an existing repo, to connect to it (or $RESTASH_KEY)")
-	force := fs.Bool("force", false, "replace an existing config on this PC")
-	fs.Parse(args)
+// readPassword asks for the account password without echoing it.
+// $RESTASH_ACCOUNT_PASSWORD is used instead if set (for scripts).
+func readPassword(email string) (string, error) {
+	if p := os.Getenv("RESTASH_ACCOUNT_PASSWORD"); p != "" {
+		return p, nil
+	}
+	fmt.Fprintf(os.Stderr, "Password for %s: ", email)
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		return string(b), err
+	}
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
 
-	if _, err := os.Stat(cfgPath); err == nil && !*force {
-		return fmt.Errorf("this PC is already set up (%s); use -force to replace it", cfgPath)
-	}
-	cfg := &agent.Config{
-		Server:   strings.TrimSuffix(*server, "/"),
-		RepoPath: strings.Trim(*repo, "/"),
-		Username: *user,
-		Password: *password,
-		Key:      *key,
-	}
-	if cfg.RepoPath == "" {
-		cfg.RepoPath = cfg.Username
-	}
-	newKey := cfg.Key == ""
-	if newKey {
-		cfg.Key = agent.NewKey()
-	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
+// unlock asks for the password (up to three times) and unlocks this PC.
+func unlock(ctx context.Context, cfgPath string, cfg *agent.Config, email string) error {
 	r, err := newRestic(cfg)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Your password unlocks this PC's backups. It is checked here and never sent anywhere.")
+	for try := 1; ; try++ {
+		pw, err := readPassword(email)
+		if err != nil {
+			return err
+		}
+		err = agent.Unlock(ctx, cfg, pw, r)
+		if errors.Is(err, agent.ErrWrongPassword) && try < 3 && os.Getenv("RESTASH_ACCOUNT_PASSWORD") == "" {
+			fmt.Fprintln(os.Stderr, "That password didn't work. Try again.")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		return cfg.Save(cfgPath)
+	}
+}
 
-	exists, err := r.Exists(ctx)
-	switch {
-	case errors.Is(err, restic.ErrWrongKey) && newKey:
-		return errors.New("a repo already exists at that path: pass its -key to connect to it")
-	case err != nil:
+func cmdJoin(ctx context.Context, cfgPath string, args []string) error {
+	fs := flag.NewFlagSet("join", flag.ExitOnError)
+	server := fs.String("server", "https://restash.bulazs.com", "restash server address")
+	name := fs.String("name", agent.PCName(), "name for this PC")
+	force := fs.Bool("force", false, "replace this PC's existing link")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return errors.New(`usage: restash-agent join [-server URL] <code from "Add a PC">`)
+	}
+	*server = strings.TrimSuffix(*server, "/")
+	if err := agent.CheckServer(*server); err != nil {
 		return err
 	}
-	switch {
-	case exists && newKey:
-		return errors.New("a repo already exists at that path: pass its -key to connect to it")
-	case !exists && !newKey:
-		return errors.New("no repo at that path to connect to")
-	case !exists:
-		if err := r.Init(ctx); err != nil {
-			return fmt.Errorf("creating repo: %w", err)
-		}
+	if _, err := agent.Load(cfgPath); err == nil && !*force {
+		return fmt.Errorf("this PC is already linked (%s); use -force to link it again", cfgPath)
 	}
+	c := agent.NewClient(*server, "", "")
+	res, err := c.Join(ctx, proto.JoinRequest{Code: fs.Arg(0), Name: *name, OS: agent.OSName(), Arch: runtime.GOARCH, Version: version})
+	if err != nil {
+		return err
+	}
+	cfg := &agent.Config{Server: *server, PCID: res.PCID, Token: res.Token}
 	if err := cfg.Save(cfgPath); err != nil {
 		return err
 	}
-	fmt.Printf("\nThis PC is set up. Settings saved to %s\n", cfgPath)
-	if newKey {
-		fmt.Printf("\nRepo key (keep it somewhere safe, you need it to restore on another PC):\n\n  %s\n\n", cfg.Key)
+	fmt.Fprintf(os.Stderr, "Linked %q to %s's account (%s).\n\n", *name, res.Name, res.Email)
+	if err := unlock(ctx, cfgPath, cfg, res.Email); err != nil {
+		return fmt.Errorf("%w\nThe PC is linked; run `restash-agent unlock` to try again", err)
 	}
+	fmt.Fprintln(os.Stderr, "\nAll set. This PC can back up now, and shows up on the website.")
 	return nil
+}
+
+func cmdUnlock(ctx context.Context, cfgPath string, args []string) error {
+	cfg, err := agent.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	acc, err := agent.NewClient(cfg.Server, cfg.PCID, cfg.Token).Account(ctx)
+	if err != nil {
+		return err
+	}
+	if err := unlock(ctx, cfgPath, cfg, acc.Email); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Unlocked.")
+	return nil
+}
+
+func cmdRun(ctx context.Context, cfgPath string, args []string) error {
+	cfg, err := agent.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	slog.Info("linking to the server", "server", cfg.Server, "pc", cfg.PCID)
+	return agent.RunLink(ctx, cfg, version, func() { slog.Info("linked; this PC shows as online") })
 }
 
 // list collects repeated flag values, e.g. -exclude a -exclude b.
@@ -162,27 +224,32 @@ func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
 func cmdBackup(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ExitOnError)
-	var tags, excludes list
-	fs.Var(&tags, "tag", "tag for the snapshot, repeatable (default entry:manual)")
+	entry := fs.String("entry", "manual", "entry this backup belongs to (tagged entry:<name>)")
+	var excludes list
 	fs.Var(&excludes, "exclude", "pattern to skip, repeatable (e.g. node_modules)")
 	fs.Parse(args)
 	if fs.NArg() == 0 {
-		return errors.New("usage: restash-agent backup [-tag t] [-exclude p] <folder>...")
+		return errors.New("usage: restash-agent backup [-entry name] [-exclude p] <folder>...")
 	}
-	if len(tags) == 0 {
-		tags = list{"entry:manual"}
-	}
-	_, r, err := load(cfgPath)
+	cfg, r, err := load(cfgPath)
 	if err != nil {
 		return err
 	}
 	r.Stdout = nil // JSON progress is parsed, not shown
-	sum, err := r.Backup(ctx, restic.BackupOptions{Paths: fs.Args(), Tags: tags, Excludes: excludes})
+	started := time.Now()
+	sum, err := r.Backup(ctx, restic.BackupOptions{Paths: fs.Args(), Tags: []string{"entry:" + *entry}, Excludes: excludes})
+	report := proto.BackupReport{Entry: *entry, StartedAt: started, FinishedAt: time.Now(), OK: sum != nil}
 	if sum != nil {
+		report.Files, report.Bytes, report.Added, report.Snapshot = int64(sum.TotalFilesProcessed), sum.TotalBytesProcessed, sum.DataAddedPacked, sum.SnapshotID
 		fmt.Printf("Backed up %d files (%s) in %s: %d new, %d changed, %s uploaded. Snapshot %s.\n",
 			sum.TotalFilesProcessed, size(sum.TotalBytesProcessed),
 			(time.Duration(sum.TotalDuration * float64(time.Second))).Round(time.Second),
 			sum.FilesNew, sum.FilesChanged, size(sum.DataAddedPacked), shortID(sum.SnapshotID))
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if rerr := agent.NewClient(cfg.Server, cfg.PCID, cfg.Token).ReportBackup(rctx, report); rerr != nil {
+		fmt.Fprintln(os.Stderr, "Warning: couldn't tell the server about this backup:", rerr)
 	}
 	if errors.Is(err, restic.ErrIncomplete) {
 		fmt.Fprintln(os.Stderr, "Warning: some files could not be read and were skipped.")
@@ -229,8 +296,9 @@ func cmdRestore(ctx context.Context, cfgPath string, args []string) error {
 func cmdForget(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("forget", flag.ExitOnError)
 	tag := fs.String("tag", "", "entry tag to apply the rules to, e.g. entry:manual (required)")
+	periods := []string{"last", "hourly", "daily", "weekly", "monthly", "yearly"}
 	keep := map[string]*int{}
-	for _, k := range []string{"last", "hourly", "daily", "weekly", "monthly", "yearly"} {
+	for _, k := range periods {
 		keep[k] = fs.Int("keep-"+k, 0, "keep the last N "+k+" snapshots")
 	}
 	dryRun := fs.Bool("dry-run", false, "only show what would be removed")
@@ -240,7 +308,7 @@ func cmdForget(ctx context.Context, cfgPath string, args []string) error {
 	}
 	a := []string{"forget", "--tag", *tag, "--group-by", "tags"}
 	hasRule := false
-	for _, k := range []string{"last", "hourly", "daily", "weekly", "monthly", "yearly"} {
+	for _, k := range periods {
 		if n := *keep[k]; n > 0 {
 			a = append(a, fmt.Sprintf("--keep-%s=%d", k, n))
 			hasRule = true

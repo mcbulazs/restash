@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,7 +9,10 @@ import (
 
 func TestSaveLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "restash", "agent.json")
-	c := &Config{Server: "https://restash.example.com/", RepoPath: "anna/laptop", Username: "anna", Password: "p", Key: NewKey()}
+	if _, err := Load(path); !errors.Is(err, ErrNotJoined) {
+		t.Fatalf("missing config: %v", err)
+	}
+	c := &Config{Server: "https://restash.example.com", PCID: "abc", Token: "tok", RepoKey: "key"}
 	if err := c.Save(path); err != nil {
 		t.Fatal(err)
 	}
@@ -19,38 +23,27 @@ func TestSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Repo().URL != "https://restash.example.com/repo/anna/laptop/" {
-		t.Fatalf("url %s", got.Repo().URL)
+	r := got.Repo()
+	if r.URL != "https://restash.example.com/repo/abc/" || r.Username != "abc" || r.Password != "tok" || r.Key != "key" {
+		t.Fatalf("repo %+v", r)
 	}
 }
 
-func TestValidate(t *testing.T) {
-	ok := Config{Server: "https://x.com", RepoPath: "anna", Username: "anna", Password: "p", Key: "k"}
-	if err := ok.Validate(); err != nil {
-		t.Fatal(err)
+func TestCheckServer(t *testing.T) {
+	for _, ok := range []string{"https://x.com", "http://localhost:8080", "http://127.0.0.1:1"} {
+		if err := CheckServer(ok); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
 	}
-	local := ok
-	local.Server = "http://localhost:8080"
-	if err := local.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	for name, mod := range map[string]func(*Config){
-		"plain http":   func(c *Config) { c.Server = "http://x.com" },
-		"no key":       func(c *Config) { c.Key = "" },
-		"other user":   func(c *Config) { c.RepoPath = "bob" },
-		"prefix trick": func(c *Config) { c.RepoPath = "annabel" },
-		"not a URL":    func(c *Config) { c.Server = "x.com" },
-	} {
-		c := ok
-		mod(&c)
-		if c.Validate() == nil {
-			t.Errorf("%s: no error", name)
+	for _, bad := range []string{"http://x.com", "x.com", "https://x.com/path", "ftp://x.com"} {
+		if CheckServer(bad) == nil {
+			t.Errorf("%s accepted", bad)
 		}
 	}
 }
 
-func TestNewKeyIsRandom(t *testing.T) {
-	if a, b := NewKey(), NewKey(); a == b || len(a) != 43 {
-		t.Fatalf("%q %q", a, b)
+func TestWSURL(t *testing.T) {
+	if wsURL("https://a.com") != "wss://a.com" || wsURL("http://localhost:1") != "ws://localhost:1" {
+		t.Fatal("wsURL")
 	}
 }

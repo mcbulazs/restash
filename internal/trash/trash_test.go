@@ -76,11 +76,8 @@ func TestDeleteMovesPackToTrash(t *testing.T) {
 	if _, err := os.Stat(dst); err != nil {
 		t.Fatalf("file not in trash: %v", err)
 	}
-	if len(fake.seen) != 1 || fake.seen[0] != "HEAD /anna/laptop/data/"+id {
+	if len(fake.seen) != 0 {
 		t.Fatalf("rest-server saw %v", fake.seen)
-	}
-	if !strings.HasPrefix(fake.auth, "Basic ") {
-		t.Fatalf("credentials not passed on: %q", fake.auth)
 	}
 }
 
@@ -92,18 +89,6 @@ func TestDeleteSnapshotIsFlat(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "trash", "2026-11-07", "anna", "snapshots", id)); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestDeleteRefusedByRestServer(t *testing.T) {
-	p, _, root := setup(t, http.StatusUnauthorized)
-	src := filepath.Join(root, "repos", "bob", "snapshots", id)
-	writeFile(t, src)
-	if rec := del(p, "/bob/snapshots/"+id); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status %d", rec.Code)
-	}
-	if _, err := os.Stat(src); err != nil {
-		t.Fatalf("file was touched: %v", err)
 	}
 }
 

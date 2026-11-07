@@ -1,9 +1,8 @@
-// Package agent holds the PC agent's local settings.
+// Package agent is the PC side of restash: joining, unlocking the PC's key,
+// and staying linked to the server.
 package agent
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,14 +14,14 @@ import (
 	"github.com/mcbulazs/restash/internal/restic"
 )
 
-// Config is what the agent needs to reach its repo. Until accounts exist it
-// is kept in a file only the current user can read.
+// Config is this PC's link to restash. It holds secrets, so it is kept in a
+// file only the current user can read.
 type Config struct {
-	Server   string `json:"server"`    // e.g. https://restash.bulazs.com
-	RepoPath string `json:"repo_path"` // e.g. anna or anna/laptop
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Key      string `json:"key"`
+	Server string `json:"server"` // e.g. https://restash.bulazs.com
+	PCID   string `json:"pc_id"`
+	Token  string `json:"token"`
+	// RepoKey is the unlocked restic password; empty until unlocked.
+	RepoKey string `json:"repo_key,omitempty"`
 }
 
 // DefaultPath is <user config dir>/restash/agent.json.
@@ -34,11 +33,14 @@ func DefaultPath() (string, error) {
 	return filepath.Join(dir, "restash", "agent.json"), nil
 }
 
+// ErrNotJoined means this PC hasn't been linked yet.
+var ErrNotJoined = errors.New("this PC isn't linked to restash yet: run `restash-agent join <code>`")
+
 // Load reads the config at path.
 func Load(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("no config at %s: run `restash-agent init` first", path)
+		return nil, ErrNotJoined
 	}
 	if err != nil {
 		return nil, err
@@ -47,7 +49,10 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	return &c, c.Validate()
+	if c.PCID == "" || c.Token == "" {
+		return nil, ErrNotJoined
+	}
+	return &c, CheckServer(c.Server)
 }
 
 // Save writes the config to path, readable only by the current user.
@@ -66,20 +71,15 @@ func (c *Config) Save(path string) error {
 	return os.Rename(tmp, path)
 }
 
-// Validate checks the fields needed to open the repo.
-func (c *Config) Validate() error {
-	u, err := url.Parse(c.Server)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return fmt.Errorf("server %q is not an http(s) URL", c.Server)
+// CheckServer makes sure the server URL is https (plain http is allowed only
+// for this machine, for testing).
+func CheckServer(server string) error {
+	u, err := url.Parse(server)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" {
+		return fmt.Errorf("server %q is not a site address like https://restash.example.com", server)
 	}
 	if u.Scheme == "http" && !isLocal(u.Hostname()) {
-		return fmt.Errorf("server %q must use https", c.Server)
-	}
-	if c.Username == "" || c.Password == "" || c.Key == "" {
-		return errors.New("username, password and key are required")
-	}
-	if c.RepoPath != c.Username && !strings.HasPrefix(c.RepoPath, c.Username+"/") {
-		return fmt.Errorf("repo path %q must start with the username %q", c.RepoPath, c.Username)
+		return fmt.Errorf("server %q must use https", server)
 	}
 	return nil
 }
@@ -88,19 +88,13 @@ func isLocal(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
-// Repo turns the config into restic's view of the repo.
+// Repo is how restic reaches this PC's repo: the username is the PC id and
+// the password its token.
 func (c *Config) Repo() restic.Repo {
 	return restic.Repo{
-		URL:      strings.TrimSuffix(c.Server, "/") + "/repo/" + strings.Trim(c.RepoPath, "/") + "/",
-		Username: c.Username,
-		Password: c.Password,
-		Key:      c.Key,
+		URL:      strings.TrimSuffix(c.Server, "/") + "/repo/" + c.PCID + "/",
+		Username: c.PCID,
+		Password: c.Token,
+		Key:      c.RepoKey,
 	}
-}
-
-// NewKey makes a random repo password (256 bits).
-func NewKey() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
 }

@@ -2,3 +2,5 @@
 /storage
 /dist
 .env
+web/node_modules
+web/dist
