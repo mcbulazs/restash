@@ -66,6 +66,16 @@ func webHandler(dist fs.FS) http.Handler {
 	files := http.FileServerFS(dist)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		// Downloads under /dl/ are answered by the page's service worker;
+		// one reaching the server means the worker wasn't there.
+		if strings.HasPrefix(r.URL.Path, "/dl/") {
+			http.Error(w, "This download has ended. Start it again from restash.", http.StatusNotFound)
+			return
+		}
+		// The service worker keeps its name, so browsers must check it.
+		if name == "sw.js" {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		if name != "" && name != "index.html" {
 			if st, err := fs.Stat(dist, name); err == nil && !st.IsDir() {
 				// The WebAssembly reader is big; send the gzipped copy if there is one.

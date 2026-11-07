@@ -78,9 +78,22 @@ const options = {
   plugins: [writeHtml],
 };
 
+// The download helper (a service worker) keeps a fixed name at the site
+// root: browsers find it by that URL and check it for updates themselves.
+const worker = {
+  entryPoints: ["src/sw/sw.ts"],
+  bundle: true,
+  outfile: "dist/sw.js",
+  minify: !watch,
+  target: "es2022",
+  logLevel: "info",
+};
+
 if (watch) {
   const ctx = await esbuild.context(options);
   await ctx.watch();
+  await (await esbuild.context(worker)).watch();
 } else {
   await esbuild.build(options);
+  await esbuild.build(worker);
 }

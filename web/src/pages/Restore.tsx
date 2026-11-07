@@ -198,7 +198,7 @@ export function RestorePage({ id }: { id: string }) {
     const name = single ? picked[0].name : `${pc.name} ${shortDate(new Date(snap.time))}.zip`;
     let sink;
     try {
-      sink = await saveAs(name, single ? "application/octet-stream" : "application/zip");
+      sink = await saveAs(name, single ? "application/octet-stream" : "application/zip", single ? (picked[0].size ?? 0) : 0);
     } catch {
       return; // the save dialog was cancelled
     }
@@ -208,8 +208,9 @@ export function RestorePage({ id }: { id: string }) {
       if (single) {
         let done = 0;
         await backup.file(snap.id, picked[0].path, async (c) => {
+          const n = c.length; // the chunk may be handed off by write
           await sink.write(c);
-          done += c.length;
+          done += n;
           setDownload({ done, total: picked[0].size ?? 0 });
         });
       } else {

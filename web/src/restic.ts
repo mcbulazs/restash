@@ -114,15 +114,17 @@ export class Backup {
   }
 }
 
-/** Where a download goes: straight to disk where the browser allows it,
- * otherwise collected and handed over at the end. */
+/** Where a download goes: straight to disk, through the browser's Save
+ * window or as a streamed download; collected in memory only as a last
+ * resort (small files, or browsers without service workers). */
 export interface Sink {
   write: Write;
   close(): Promise<void>;
   abort(): Promise<void>;
 }
 
-export async function saveAs(name: string, type: string): Promise<Sink> {
+/** saveAs picks the best way to save name. size is its length if known. */
+export async function saveAs(name: string, type: string, size = 0): Promise<Sink> {
   const picker = (window as unknown as { showSaveFilePicker?: (o: object) => Promise<FileSystemFileHandle> }).showSaveFilePicker;
   if (picker) {
     const handle = await picker({ suggestedName: name });
@@ -133,6 +135,13 @@ export async function saveAs(name: string, type: string): Promise<Sink> {
       abort: () => w.abort(),
     };
   }
+  const streamed = await streamDownload(name, type, size).catch(() => null);
+  if (streamed) return streamed;
+  return memoryDownload(name, type);
+}
+
+/** No disk access at all: collect everything, then hand it over. */
+function memoryDownload(name: string, type: string): Sink {
   const parts: BlobPart[] = [];
   return {
     write: async (c) => {
@@ -148,6 +157,107 @@ export async function saveAs(name: string, type: string): Promise<Sink> {
     },
     abort: async () => {
       parts.length = 0;
+    },
+  };
+}
+
+/** The service worker in /sw.js, ready to take downloads. */
+async function downloadWorker(): Promise<ServiceWorker | null> {
+  if (!("serviceWorker" in navigator) || typeof ReadableStream === "undefined") return null;
+  const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/dl/" });
+  if (reg.active) return reg.active;
+  const sw = reg.installing ?? reg.waiting;
+  if (!sw) return null;
+  await new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("the download helper didn't start")), 10_000);
+    sw.addEventListener("statechange", () => {
+      if (sw.state === "activated") {
+        clearTimeout(t);
+        resolve();
+      }
+    });
+  });
+  return sw;
+}
+
+// How long a write may wait for the browser before the download counts as
+// stuck (it never started, or the browser dropped it).
+const stallLimit = 60_000;
+
+/** A download the browser saves to disk while it's still being made. */
+async function streamDownload(name: string, type: string, size: number): Promise<Sink | null> {
+  const sw = await downloadWorker();
+  if (!sw) return null;
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const ch = new MessageChannel();
+  const port = ch.port1;
+  let more: (() => void) | null = null;
+  let failed: Error | null = null;
+  const waiters = new Set<(e: Error) => void>();
+  const fail = (e: Error) => {
+    failed = e;
+    waiters.forEach((w) => w(e));
+    port.postMessage({ abort: true });
+  };
+  const ready = new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("the download helper didn't answer")), 10_000);
+    port.onmessage = (m) => {
+      if (m.data === "ready") {
+        clearTimeout(t);
+        resolve();
+      } else if (m.data === "more") {
+        const go = more;
+        more = null;
+        go?.();
+      } else if (m.data === "cancelled") {
+        fail(new Error("The download was cancelled."));
+      }
+    };
+  });
+  sw.postMessage({ type: "download", id, name, mime: type, size }, [ch.port2]);
+  await ready;
+
+  // A hidden frame opens the download; the worker answers it.
+  const frame = document.createElement("iframe");
+  frame.hidden = true;
+  frame.src = `/dl/${id}/${encodeURIComponent(name)}`;
+  document.body.appendChild(frame);
+  // Keeps the worker awake for as long as the download runs (see sw.ts).
+  const ping = setInterval(() => sw.postMessage({ type: "ping" }), 10_000);
+  const cleanup = () => {
+    clearInterval(ping);
+    setTimeout(() => frame.remove(), 60_000);
+  };
+
+  return {
+    write: (c) =>
+      new Promise<void>((resolve, reject) => {
+        if (failed) return reject(failed);
+        const t = setTimeout(() => fail(new Error("The browser stopped taking the download.")), stallLimit);
+        const onFail = (e: Error) => {
+          clearTimeout(t);
+          waiters.delete(onFail);
+          reject(e);
+        };
+        waiters.add(onFail);
+        more = () => {
+          clearTimeout(t);
+          waiters.delete(onFail);
+          resolve();
+        };
+        // The chunk is fresh from the reader, so its memory moves over
+        // instead of being copied.
+        const buf = c.byteOffset === 0 && c.byteLength === c.buffer.byteLength ? c.buffer : c.slice().buffer;
+        port.postMessage({ chunk: buf }, [buf as ArrayBuffer]);
+      }),
+    close: async () => {
+      if (failed) throw failed;
+      port.postMessage({ end: true });
+      cleanup();
+    },
+    abort: async () => {
+      port.postMessage({ abort: true });
+      cleanup();
     },
   };
 }
