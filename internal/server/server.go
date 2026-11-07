@@ -47,6 +47,7 @@ type Server struct {
 	notify    *notifier
 	pokeCheck chan struct{}
 	agents    *agentFiles
+	progress  progressStore
 	fakeSalt  []byte
 	now       func() time.Time
 }
@@ -109,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/pcs/join/{code}", s.user(s.handleJoinStatus))
 	mux.Handle("GET /api/pcs/join/{code}/download/{target}", s.user(s.handleAgentDownload))
 	mux.Handle("GET /api/pcs/{pc}", s.user(s.handlePC))
+	mux.Handle("GET /api/pcs/{pc}/backups/running", s.user(s.handleProgress))
 	mux.Handle("POST /api/pcs/{pc}/entries", s.user(s.handleCreateEntry))
 	mux.Handle("PUT /api/pcs/{pc}/entries/{entry}", s.user(s.handleUpdateEntry))
 	mux.Handle("DELETE /api/pcs/{pc}/entries/{entry}", s.user(s.handleDeleteEntry))

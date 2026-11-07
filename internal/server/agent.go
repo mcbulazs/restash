@@ -176,6 +176,9 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	s.store.TouchPC(context.Background(), pc.ID)
 	defer func() {
 		s.hub.remove(pc.ID, conn)
+		if !s.hub.online(pc.ID) {
+			s.progress.clear(pc.ID) // its backups stopped with it
+		}
 		s.store.TouchPC(context.Background(), pc.ID)
 		c.CloseNow()
 	}()
@@ -218,6 +221,8 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			s.store.HelloPC(context.Background(), pc.ID, clean(msg.Version, 40), tz)
 		case proto.TypeBrowseResult:
 			s.hub.deliver(pc.ID, msg.ID, msg.Data)
+		case proto.TypeBackupState:
+			s.progress.update(pc.ID, msg, s.now())
 		case proto.TypeRestoreState:
 			if job := s.restores.update(pc.ID, msg); job != nil && job.EventID != 0 {
 				s.finishRestoreEvent(job, pc.Name)

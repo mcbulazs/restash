@@ -147,6 +147,19 @@ type BackupOptions struct {
 	Paths    []string
 	Tags     []string
 	Excludes []string
+	// Progress, if set, gets restic's status about every 2 seconds.
+	Progress func(BackupProgress)
+}
+
+// BackupProgress is how far a backup is. Totals grow while restic is still
+// scanning; SecondsRemaining is 0 until it can tell.
+type BackupProgress struct {
+	Percent          float64 `json:"percent_done"`
+	TotalFiles       int64   `json:"total_files"`
+	FilesDone        int64   `json:"files_done"`
+	TotalBytes       int64   `json:"total_bytes"`
+	BytesDone        int64   `json:"bytes_done"`
+	SecondsRemaining int64   `json:"seconds_remaining"`
 }
 
 // Backup backs up the paths and returns restic's summary. Pack size is left
@@ -166,6 +179,10 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 	args = append(args, opt.Paths...)
 
 	c := r.cmd(ctx, args...)
+	if opt.Progress != nil {
+		// Without a terminal restic reports only once a minute.
+		c.Env = append(c.Env, "RESTIC_PROGRESS_FPS=0.5")
+	}
 	out, err := c.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -177,7 +194,7 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 	if errOut == nil {
 		errOut = os.Stderr
 	}
-	sum, perr := parseBackupOutput(out, errOut)
+	sum, perr := parseBackupOutput(out, errOut, opt.Progress)
 	werr := c.Wait()
 	var exit *exec.ExitError
 	switch {
@@ -198,9 +215,9 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 var ErrIncomplete = errors.New("some files could not be read")
 
 // parseBackupOutput reads restic's JSON lines and keeps the summary. Status
-// lines are skipped; files restic couldn't read are written to errOut as
-// "path: reason" lines.
-func parseBackupOutput(rd io.Reader, errOut io.Writer) (*Summary, error) {
+// lines go to progress (if set); files restic couldn't read are written to
+// errOut as "path: reason" lines.
+func parseBackupOutput(rd io.Reader, errOut io.Writer, progress func(BackupProgress)) (*Summary, error) {
 	var sum *Summary
 	sc := bufio.NewScanner(rd)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -216,6 +233,13 @@ func parseBackupOutput(rd io.Reader, errOut io.Writer) (*Summary, error) {
 			continue
 		}
 		switch msg.MessageType {
+		case "status":
+			if progress != nil {
+				var p BackupProgress
+				if json.Unmarshal(sc.Bytes(), &p) == nil {
+					progress(p)
+				}
+			}
 		case "summary":
 			sum = &Summary{}
 			if err := json.Unmarshal(sc.Bytes(), sum); err != nil {

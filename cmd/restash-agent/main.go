@@ -329,7 +329,8 @@ func runAgent(ctx context.Context, cfgPath string, asService bool) error {
 	go rn.Run(ctx)
 	slog.Info("linking to the server", "server", cfg.Server, "pc", cfg.PCID, "version", version)
 	err = agent.RunLink(ctx, cfg, version, agent.LinkHandler{
-		OnUp: func() {
+		OnUp: func(send func(proto.Message)) {
+			rn.SetLink(send)
 			slog.Info("linked; this PC shows as online")
 			go syncEntries() // pick up changes made while offline
 		},

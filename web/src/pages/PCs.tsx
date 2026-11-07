@@ -1,5 +1,5 @@
 import { api, type PC } from "../api.ts";
-import { bytes, shortDate, when, daysBetween } from "../format.ts";
+import { bytes, daysBetween, percentText, shortDate, when } from "../format.ts";
 import { Link } from "../router.tsx";
 import { ErrorBox, Icon, Legend, nights, Tally, useLoad } from "../components/ui.tsx";
 import { useEffect } from "react";
@@ -43,6 +43,10 @@ export function headline(pcs: PC[]): [string, string] {
 
 function statusLine(pc: PC): string {
   if (!pc.ready) return "Waiting for its password";
+  if (pc.running?.length) {
+    const r = pc.running[0];
+    return r.totalBytes > 0 ? `Backing up now, ${percentText(r.percent)}` : "Backing up now";
+  }
   if (pc.online) return pc.schedules.length ? schedulesSummary(pc.schedules) : "Online now";
   if (pc.lastSeen) {
     const seen = new Date(pc.lastSeen);

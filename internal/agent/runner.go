@@ -42,7 +42,25 @@ type Runner struct {
 	queued  map[string]bool
 	jobs    chan string // entry ids
 	wake    chan struct{}
-	busy    atomic.Int32 // backups and restores running
+	busy    atomic.Int32        // backups and restores running
+	send    func(proto.Message) // the server link, nil while offline
+}
+
+// SetLink gives the runner the server link, for live progress.
+func (rn *Runner) SetLink(send func(proto.Message)) {
+	rn.mu.Lock()
+	rn.send = send
+	rn.mu.Unlock()
+}
+
+// tell sends m to the server if linked; progress is best effort.
+func (rn *Runner) tell(m proto.Message) {
+	rn.mu.Lock()
+	send := rn.send
+	rn.mu.Unlock()
+	if send != nil {
+		send(m)
+	}
 }
 
 // Busy says whether a backup or restore is running (updates wait for it).
@@ -216,7 +234,17 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 	errs := &tail{}
 	r := *rn.restic
 	r.Stdout, r.Stderr = nil, errs
-	sum, err := r.Backup(ctx, restic.BackupOptions{Paths: e.Paths, Tags: []string{"entry:" + e.ID}, Excludes: e.Skips})
+	rn.tell(proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "running"})
+	var lastSent time.Time
+	progress := func(p restic.BackupProgress) {
+		if time.Since(lastSent) < 2*time.Second {
+			return
+		}
+		lastSent = time.Now()
+		rn.tell(proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "running",
+			Percent: p.Percent, Files: p.FilesDone, TotalFiles: p.TotalFiles, Bytes: p.BytesDone, TotalBytes: p.TotalBytes, ETA: p.SecondsRemaining})
+	}
+	sum, err := r.Backup(ctx, restic.BackupOptions{Paths: e.Paths, Tags: []string{"entry:" + e.ID}, Excludes: e.Skips, Progress: progress})
 	if ctx.Err() != nil {
 		return // shutting down; try again next time
 	}
@@ -248,6 +276,12 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 		slog.Warn("couldn't report the backup", "err", err)
 	}
 	cancel()
+	// The report lists the run; this ends the live view.
+	end := proto.Message{Type: proto.TypeBackupState, Entry: e.ID, State: "done", Percent: 1}
+	if sum == nil {
+		end.State = "failed"
+	}
+	rn.tell(end)
 
 	rn.mu.Lock()
 	rn.state.LastRun[e.ID] = started

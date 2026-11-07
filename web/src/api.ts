@@ -92,6 +92,19 @@ export interface PC {
   schedules: Schedule[];
   problem: "" | "failed" | "late" | "quiet";
   problems: { kind: "failed" | "late" | "quiet"; pcId: string; entry?: string; since: string }[];
+  running: Running[];
+}
+
+/** A backup running right now. Totals grow while restic is still looking for changes. */
+export interface Running {
+  entry: string;
+  percent: number; // 0 to 1
+  files: number;
+  totalFiles: number;
+  bytes: number;
+  totalBytes: number;
+  eta: number; // seconds left, 0 if unknown
+  startedAt: string;
 }
 
 export interface PCDetail extends PC {
@@ -221,6 +234,7 @@ export const api = {
   updateEntry: (pc: string, id: string, body: { schedule: Schedule; config: string }) =>
     call<void>("PUT", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`, body),
   deleteEntry: (pc: string, id: string) => call<void>("DELETE", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`),
+  running: (pc: string) => call<{ online: boolean; running: Running[] }>("GET", `/api/pcs/${encodeURIComponent(pc)}/backups/running`),
   runNow: (pc: string, entry = "") => call<void>("POST", `/api/pcs/${encodeURIComponent(pc)}/run`, { entry }),
   browse: (pc: string, data: string) => call<{ data: string }>("POST", `/api/pcs/${encodeURIComponent(pc)}/browse`, { data }),
 

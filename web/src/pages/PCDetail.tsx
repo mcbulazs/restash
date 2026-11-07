@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { api, ApiError, type PCDetail, type RunDetail } from "../api.ts";
-import { bytes, daysBetween, shortDate, startOfDay, when } from "../format.ts";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError, type PCDetail, type RunDetail, type Running } from "../api.ts";
+import { bytes, daysBetween, percentText, shortDate, startOfDay, timeLeft, when } from "../format.ts";
 import { Link, navigate } from "../router.tsx";
 import { ErrorBox, Icon, nights, Tally, UnlockCard } from "../components/ui.tsx";
 import { detailText, isLate, NeedUnlock, openDetail, openEntries, pcEntryKey, retentionText, scheduleText, shortPath, skipsText, type Entry } from "../entries.ts";
@@ -28,6 +28,8 @@ export function PCDetailPage({ id }: { id: string }) {
   const [tick, setTick] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [running, setRunning] = useState<Running[]>([]);
+  const runningIds = useRef<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -43,6 +45,8 @@ export function PCDetailPage({ id }: { id: string }) {
         const details = new Map<RunDetail, string>();
         await Promise.all(pc.runs.filter((r) => r.detail).map(async (r) => details.set(r, await openDetail(key, pc.id, r.detail))));
         if (alive) {
+          setRunning(pc.running ?? []);
+          runningIds.current = (pc.running ?? []).map((r) => r.entry);
           setData({ pc, entries, details });
           setLocked(false);
           setError(null);
@@ -63,12 +67,29 @@ export function PCDetailPage({ id }: { id: string }) {
     return () => clearInterval(t);
   }, []);
 
+  // Live progress while the PC is online. When a backup finishes, reload
+  // so it shows up under Recent backups.
+  const online = data?.pc.online ?? false;
+  useEffect(() => {
+    if (!online) return;
+    const t = setInterval(() => {
+      api.running(id).then((r) => {
+        const now = r.running.map((x) => x.entry);
+        const finished = runningIds.current.some((e) => !now.includes(e));
+        runningIds.current = now;
+        setRunning(r.running);
+        if (finished) setTick((n) => n + 1);
+      }, () => {});
+    }, 3000);
+    return () => clearInterval(t);
+  }, [id, online]);
+
   const runNow = async (entry = "", label = "everything") => {
     setNote(null);
     try {
       await api.runNow(id, entry);
-      setNote({ ok: true, text: `Asked ${data?.pc.name ?? "the PC"} to back up ${label} now. It shows up below when it's done.` });
-      setTimeout(() => setTick((n) => n + 1), 4000);
+      setNote({ ok: true, text: `Asked ${data?.pc.name ?? "the PC"} to back up ${label} now. You can follow it below.` });
+      setTimeout(() => setTick((n) => n + 1), 3000);
     } catch (e) {
       setNote({ ok: false, text: e instanceof Error ? e.message : String(e) });
     }
@@ -99,8 +120,17 @@ export function PCDetailPage({ id }: { id: string }) {
   const late = entries.filter((e) => isLate(e.record.schedule, e.record.lastOk?.at ?? null, e.record.createdAt));
   const failing = entries.filter((e) => pc.runs.find((r) => r.entry === e.record.id)?.ok === false);
   const facts = [pc.os, pc.ready ? `${bytes(pc.stored)} stored` : ""].filter(Boolean).join(", ");
+  const runningOf = new Map(running.map((r) => [r.entry, r]));
   let summary: string;
-  if (!pc.ready) summary = `${pc.name} is waiting for its password. Type it on the PC to finish setting it up.`;
+  if (running.length > 0) {
+    const r = running[0];
+    const name = nameOf.get(r.entry) ?? "An entry";
+    summary =
+      r.totalBytes > 0
+        ? `Backing up ${name}: ${percentText(r.percent)} done${r.eta > 0 ? `, ${timeLeft(r.eta)} left` : ""}.`
+        : `Backing up ${name}: looking for changes.`;
+    if (running.length > 1) summary += ` ${running.length - 1} more running.`;
+  } else if (!pc.ready) summary = `${pc.name} is waiting for its password. Type it on the PC to finish setting it up.`;
   else if (entries.length === 0) summary = `Nothing is backed up yet. Add an entry to pick folders. ${facts}.`;
   else if (failing.length > 0) {
     const e = failing[0];
@@ -167,6 +197,7 @@ export function PCDetailPage({ id }: { id: string }) {
               const runsOf = pc.runs.filter((r) => r.entry === e.record.id).reverse();
               const lastRun = pc.runs.find((r) => r.entry === e.record.id);
               const failed = lastRun && !lastRun.ok;
+              const live = runningOf.get(e.record.id);
               const cfg = e.config;
               return (
                 <div className="entry" key={e.record.id}>
@@ -184,9 +215,13 @@ export function PCDetailPage({ id }: { id: string }) {
                       </div>
                       <div className="entry-tally">
                         <Tally marks={nights(runsOf.map((r) => ({ at: r.at, ok: r.ok })), e.record.createdAt)} />
-                        <div className={`small ${failed ? "fail-text" : ""}`}>
-                          {failed ? `Failed ${when(lastRun.at).toLowerCase()}` : e.record.lastOk ? `Last backup ${when(e.record.lastOk.at).toLowerCase()}` : "Not backed up yet"}
-                        </div>
+                        {live ? (
+                          <div className="small live-text">Backing up, {live.totalBytes > 0 ? percentText(live.percent) : "starting"}</div>
+                        ) : (
+                          <div className={`small ${failed ? "fail-text" : ""}`}>
+                            {failed ? `Failed ${when(lastRun.at).toLowerCase()}` : e.record.lastOk ? `Last backup ${when(e.record.lastOk.at).toLowerCase()}` : "Not backed up yet"}
+                          </div>
+                        )}
                       </div>
                       {cfg && (
                         <Link href={`/pcs/${pc.id}/entries/${e.record.id}`} className="entry-edit">
@@ -194,6 +229,7 @@ export function PCDetailPage({ id }: { id: string }) {
                         </Link>
                       )}
                     </div>
+                    {live && <LiveBackup r={live} />}
                     {cfg && (
                       <ul className="facts">
                         <li>
@@ -260,6 +296,23 @@ export function PCDetailPage({ id }: { id: string }) {
             </p>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** A running backup: a bar and how far it is. */
+function LiveBackup({ r }: { r: Running }) {
+  const known = r.totalBytes > 0;
+  return (
+    <div className="progress-line live-backup" role="status">
+      <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={known ? Math.floor(r.percent * 100) : undefined}>
+        <i style={{ width: known ? `${Math.max(2, r.percent * 100)}%` : "100%" }} className={known ? "" : "indeterminate"} />
+      </div>
+      <div className="small">
+        {known
+          ? `${bytes(r.bytes)} of ${bytes(r.totalBytes)} checked, ${r.files.toLocaleString()} of ${r.totalFiles.toLocaleString()} files${r.eta > 0 ? `. ${timeLeft(r.eta)[0].toUpperCase()}${timeLeft(r.eta).slice(1)} left.` : "."}`
+          : "Looking for changes…"}
       </div>
     </div>
   );

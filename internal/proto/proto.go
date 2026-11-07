@@ -140,11 +140,16 @@ type Message struct {
 	// (agent → server)
 	ID   string `json:"id,omitempty"`
 	Data string `json:"data,omitempty"` // locked request or answer
-	// restore-status: how far a restore is
+	// restore-status, backup-status: how far it is
 	State   string  `json:"state,omitempty"` // running, done, failed
 	Percent float64 `json:"percent,omitempty"`
 	Files   int64   `json:"files,omitempty"`
 	Bytes   int64   `json:"bytes,omitempty"`
+	// backup-status only (Entry says which entry): totals so far, which
+	// grow while restic is still scanning, and seconds left (0: unknown).
+	TotalFiles int64 `json:"totalFiles,omitempty"`
+	TotalBytes int64 `json:"totalBytes,omitempty"`
+	ETA        int64 `json:"eta,omitempty"`
 }
 
 // RestoreJob asks a PC to restore files. It travels locked with the target
@@ -180,4 +185,5 @@ const (
 	TypeBrowseResult = "browse-result"
 	TypeRestore      = "restore"
 	TypeRestoreState = "restore-status"
+	TypeBackupState  = "backup-status" // a backup's progress (agent → server)
 )

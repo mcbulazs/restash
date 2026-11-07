@@ -2173,3 +2173,34 @@ a.feed-item:hover {
     padding: 40px 16px;
   }
 }
+
+/* A backup running now, on the PC page. */
+.live-text {
+  color: var(--cobalt);
+  font-weight: 500;
+}
+
+.live-backup {
+  margin: 12px 0 2px;
+  max-width: 560px;
+}
+
+.live-backup .small {
+  margin-top: 6px;
+}
+
+.live-backup .bar i.indeterminate {
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-backup .bar i.indeterminate {
+    animation: none;
+  }
+}

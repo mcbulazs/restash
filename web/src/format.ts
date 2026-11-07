@@ -54,3 +54,18 @@ export function bytes(n: number): string {
 export function minutesLeft(iso: string, now = new Date()): number {
   return Math.max(0, Math.round((new Date(iso).getTime() - now.getTime()) / MIN));
 }
+
+/** "about 3 minutes", for time left. */
+export function timeLeft(seconds: number): string {
+  if (seconds < 60) return "under a minute";
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `about ${m} minute${m === 1 ? "" : "s"}`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return `about ${h} hour${h === 1 ? "" : "s"}${rest >= 5 ? ` ${rest} min` : ""}`;
+}
+
+/** "60%", never 100% while it's still running. */
+export function percentText(p: number): string {
+  return `${Math.min(99, Math.floor(p * 100))}%`;
+}

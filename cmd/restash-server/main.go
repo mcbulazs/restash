@@ -29,14 +29,14 @@ import (
 var version = "dev"
 
 type config struct {
-	listen     string
-	publicURL  *url.URL
-	storage    string
-	db         string
-	webDir     string
-	trashDays  int
-	ntfy       string
-	metrics    string
+	listen    string
+	publicURL *url.URL
+	storage   string
+	db        string
+	webDir    string
+	trashDays int
+	ntfy      string
+	metrics   string
 }
 
 func env(key, def string) string {

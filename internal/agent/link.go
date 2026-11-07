@@ -17,7 +17,7 @@ import (
 
 // LinkHandler gets what the server sends. Any field may be nil.
 type LinkHandler struct {
-	OnUp      func()                            // linked (again)
+	OnUp      func(send func(proto.Message))    // linked (again); send writes to the link
 	OnEntries func()                            // entries changed
 	OnRun     func(entry string)                // back up now ("" for all)
 	OnBrowse  func(data string) (string, error) // folder listing request
@@ -76,8 +76,15 @@ func linkOnce(ctx context.Context, cfg *Config, version string, h LinkHandler) e
 	if err := wsjson.Write(ctx, c, proto.Message{Type: proto.TypeHello, Version: version, Timezone: Timezone()}); err != nil {
 		return err
 	}
+	send := func(m proto.Message) {
+		wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		wsjson.Write(wctx, c, m)
+	}
 	if h.OnUp != nil {
-		h.OnUp()
+		h.OnUp(send)
 	}
 	for {
 		var msg proto.Message
@@ -97,13 +104,6 @@ func linkOnce(ctx context.Context, cfg *Config, version string, h LinkHandler) e
 			if h.OnRestore == nil {
 				continue
 			}
-			send := func(m proto.Message) {
-				wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				writeMu.Lock()
-				defer writeMu.Unlock()
-				wsjson.Write(wctx, c, m)
-			}
 			go h.OnRestore(msg.ID, msg.Data, send)
 		case proto.TypeBrowse:
 			if h.OnBrowse == nil {
@@ -116,11 +116,7 @@ func linkOnce(ctx context.Context, cfg *Config, version string, h LinkHandler) e
 					slog.Warn("folder listing request refused", "err", err)
 					return
 				}
-				wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				writeMu.Lock()
-				defer writeMu.Unlock()
-				wsjson.Write(wctx, c, proto.Message{Type: proto.TypeBrowseResult, ID: msg.ID, Data: data})
+				send(proto.Message{Type: proto.TypeBrowseResult, ID: msg.ID, Data: data})
 			}(msg)
 		}
 	}

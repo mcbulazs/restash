@@ -31,6 +31,7 @@ type pcJSON struct {
 	Schedules    []schedule.Schedule `json:"schedules"`
 	Problem      string              `json:"problem"` // failed, quiet, late or ""
 	Problems     []status.Problem    `json:"problems"`
+	Running      []progressJSON      `json:"running"` // backups running now
 }
 
 func ptr(t time.Time, ok bool) *time.Time {
@@ -70,6 +71,7 @@ func (s *Server) describePCs(r *http.Request, pcs []store.PC) ([]pcJSON, error) 
 			Stored: s.sizes.size(p.ID),
 			Recent: []runJSON{}, Schedules: []schedule.Schedule{},
 			Problem: states[p.ID].Problem, Problems: states[p.ID].Problems,
+			Running: s.progress.list(p.ID, s.now()),
 		}
 		if j.Problems == nil {
 			j.Problems = []status.Problem{}
