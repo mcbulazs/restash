@@ -37,6 +37,8 @@ func (rn *Runner) sourceRestic(job proto.RestoreJob) (*restic.Restic, bool) {
 
 // Restore carries out a restore job.
 func (rn *Runner) Restore(ctx context.Context, job proto.RestoreJob, status RestoreStatus) {
+	rn.busy.Add(1)
+	defer rn.busy.Add(-1)
 	restoreMu.Lock()
 	defer restoreMu.Unlock()
 	where, err := rn.restore(ctx, job, status)
@@ -230,6 +232,8 @@ func (rn *Runner) PlanPull(ctx context.Context, sourcePC, sourceKey string) (*Pu
 
 // Pull restores every folder of a plan into into/<folder name>.
 func (rn *Runner) Pull(ctx context.Context, sourcePC, sourceKey string, plan *PullPlan, into string, progress func(done, total int, folder string)) error {
+	rn.busy.Add(1)
+	defer rn.busy.Add(-1)
 	r, _ := rn.sourceRestic(proto.RestoreJob{SourcePC: sourcePC, SourceKey: sourceKey})
 	errs := &tail{}
 	r.Stdout, r.Stderr = nil, errs

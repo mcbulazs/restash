@@ -111,23 +111,49 @@ docker compose logs restash | grep signup   # link for the admin account
 | `RESTASH_TRASH_DAYS`      | `30`                      | Days deleted files stay in the trash      |
 | `RESTASH_NTFY_SERVER`     | (off)                     | ntfy server for alerts, e.g. `https://ntfy.sh` |
 | `RESTASH_METRICS_LISTEN`  | (off)                     | Address for Prometheus metrics            |
+| `RESTASH_AGENT_SOURCE`    | this version's GitHub release | Where "Add a PC" downloads come from (a release URL ending in `/`, or a folder) |
 
 People join by invite link (People → Invite someone). restash doesn't send
 email; you send the link yourself.
 
 ## Agent
 
-Open **Add a PC** on the website for a one-time code, then on that PC:
+On the PC, open **Add a PC** on the website and download restash. The file
+is named for a one-time code (`restash-setup-K7Q2MX.exe`), so opening it is
+all it takes: it links the PC to the account, asks for the account password
+(checked on the PC, never sent), and installs itself to run in the
+background and start with the PC:
+
+| OS | Runs as | Agent | Log |
+| --- | --- | --- | --- |
+| Linux | systemd user service, with lingering so it also runs after a reboot | `~/.local/share/restash/restash-agent` | `journalctl --user -u restash-agent` |
+| macOS | launchd agent while you're logged in | `~/Library/Application Support/restash/restash-agent` | `~/Library/Logs/restash-agent.log` |
+| Windows | Windows service (asks for administrator once) | `%ProgramFiles%\restash\restash-agent.exe` | `%ProgramData%\restash\agent.log` |
+
+On Linux and macOS it runs as you, so restored files are yours. On Windows
+the service runs as SYSTEM; its settings are in `%ProgramData%\restash`,
+open only to administrators. The builds are unsigned: on Windows click
+"More info" → "Run anyway"; on macOS use "Open Anyway" in System Settings →
+Privacy & Security, and give the agent Full Disk Access to back up folders
+macOS keeps private (setup prints the path).
+
+If the file got renamed, setup asks for the code. With the agent already
+there, `restash-agent setup -server https://restash.example.com K7Q2MX`
+does the same.
+
+The service updates itself from this repo's GitHub releases (never from the
+restash server): it checks every 6 hours, checks the download against the
+release's `SHA256SUMS`, waits for running backups and restores, and
+restarts. Development builds don't update; `RESTASH_NO_UPDATE=1` turns it
+off.
+
+By hand:
 
 ```sh
+restash-agent status                 # linked? unlocked? service running?
 restash-agent join -server https://restash.example.com K7Q2MX
-```
-
-It asks for your account password, unlocks the PC's key and creates its
-repo. Then:
-
-```sh
-restash-agent run                    # stay linked and back up entries on schedule
+restash-agent install                # run in the background (uninstall to stop)
+restash-agent run                    # or stay in the foreground instead
 restash-agent entries                # list entries and when they run next
 restash-agent pull                   # bring back another PC's files
 restash-agent backup -exclude node_modules ~/Documents ~/Projects
@@ -135,6 +161,10 @@ restash-agent snapshots
 restash-agent restore -target ~/restored latest
 restash-agent forget -tag entry:manual -keep-daily 7 -keep-monthly 12
 ```
+
+Setup files link to `https://restash.bulazs.com` unless built with
+`-ldflags "-X main.defaultServer=https://restash.example.com"`
+(`RESTASH_SERVER` overrides it at run time).
 
 Release builds of the agent carry the official restic release inside
 (pinned and checked in [scripts/restic.sha256](scripts/restic.sha256)) and
@@ -148,8 +178,8 @@ go build -tags restic_bundled ./cmd/restash-agent
 ```
 
 The agent's settings are saved to
-`<config dir>/restash/agent.json` (override with `RESTASH_CONFIG`), readable
-only by the current user. `RESTASH_ACCOUNT_PASSWORD` skips the password
+`<config dir>/restash/agent.json` (`%ProgramData%\restash\agent.json` on
+Windows; override with `RESTASH_CONFIG`), readable only by the current user. `RESTASH_ACCOUNT_PASSWORD` skips the password
 prompt, for scripts.
 
 ## Building

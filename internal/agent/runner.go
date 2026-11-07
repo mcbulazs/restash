@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mcbulazs/restash/internal/proto"
@@ -41,7 +42,11 @@ type Runner struct {
 	queued  map[string]bool
 	jobs    chan string // entry ids
 	wake    chan struct{}
+	busy    atomic.Int32 // backups and restores running
 }
+
+// Busy says whether a backup or restore is running (updates wait for it).
+func (rn *Runner) Busy() bool { return rn.busy.Load() > 0 }
 
 // NewRunner builds a runner for an unlocked PC.
 func NewRunner(cfg *Config, statePath string, r *restic.Restic) (*Runner, error) {
@@ -204,6 +209,8 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 	if !ok {
 		return
 	}
+	rn.busy.Add(1)
+	defer rn.busy.Add(-1)
 	slog.Info("backing up", "entry", e.ID)
 	started := rn.now()
 	errs := &tail{}

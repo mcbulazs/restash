@@ -17,11 +17,8 @@ const maxDirs = 2000
 
 // ListFolders lists the folders inside path, or the top level ("" path):
 // drives on Windows, / elsewhere.
-func ListFolders(path string) proto.BrowseResult {
-	res := proto.BrowseResult{Path: path, Sep: string(filepath.Separator)}
-	if home, err := os.UserHomeDir(); err == nil {
-		res.Home = home
-	}
+func ListFolders(path, home string) proto.BrowseResult {
+	res := proto.BrowseResult{Path: path, Sep: string(filepath.Separator), Home: home}
 	if path == "" {
 		res.Dirs = roots()
 		return res
@@ -73,7 +70,7 @@ func roots() []string {
 }
 
 // AnswerBrowse unlocks a folder listing request, lists, and locks the answer.
-func AnswerBrowse(entryKey []byte, pcID, data string) (string, error) {
+func AnswerBrowse(entryKey []byte, pcID, home, data string) (string, error) {
 	label := vault.LabelBrowse(pcID)
 	plain, err := vault.Open(entryKey, data, label)
 	if err != nil {
@@ -83,7 +80,7 @@ func AnswerBrowse(entryKey []byte, pcID, data string) (string, error) {
 	if err := json.Unmarshal(plain, &req); err != nil {
 		return "", err
 	}
-	out, err := json.Marshal(ListFolders(req.Path))
+	out, err := json.Marshal(ListFolders(req.Path, home))
 	if err != nil {
 		return "", err
 	}

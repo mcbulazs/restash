@@ -51,14 +51,14 @@ func TestListFolders(t *testing.T) {
 		os.Mkdir(filepath.Join(dir, d), 0o700)
 	}
 	os.WriteFile(filepath.Join(dir, "file.txt"), nil, 0o600)
-	res := ListFolders(dir)
+	res := ListFolders(dir, "")
 	if res.Error != "" || len(res.Dirs) != 2 || filepath.Base(res.Dirs[0]) != "A" || res.Parent != filepath.Dir(dir) {
 		t.Fatalf("%+v", res)
 	}
-	if top := ListFolders(""); len(top.Dirs) == 0 {
+	if top := ListFolders("", ""); len(top.Dirs) == 0 {
 		t.Fatal("no top level")
 	}
-	if bad := ListFolders(filepath.Join(dir, "missing")); bad.Error == "" {
+	if bad := ListFolders(filepath.Join(dir, "missing"), ""); bad.Error == "" {
 		t.Fatal("missing folder listed")
 	}
 }
@@ -67,7 +67,7 @@ func TestAnswerBrowse(t *testing.T) {
 	key := vault.EntryKey(vault.NewKey())
 	req, _ := json.Marshal(proto.BrowseRequest{Path: t.TempDir()})
 	sealed, _ := vault.Seal(key, req, vault.LabelBrowse("pc1"))
-	out, err := AnswerBrowse(key, "pc1", sealed)
+	out, err := AnswerBrowse(key, "pc1", "", sealed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestAnswerBrowse(t *testing.T) {
 	}
 	// A request locked for another PC is refused.
 	other, _ := vault.Seal(key, req, vault.LabelBrowse("pc2"))
-	if _, err := AnswerBrowse(key, "pc1", other); err == nil {
+	if _, err := AnswerBrowse(key, "pc1", "", other); err == nil {
 		t.Fatal("answered a request for another PC")
 	}
 }

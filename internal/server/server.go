@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,7 +30,10 @@ type Config struct {
 	// NtfyServer is where alerts go, e.g. https://ntfy.sh; empty turns
 	// alerts off. People only choose a topic on it.
 	NtfyServer string
-	Now        func() time.Time
+	// AgentSource is where agent downloads come from: a release download
+	// URL ending in / (see DefaultAgentSource) or a local folder.
+	AgentSource string
+	Now         func() time.Time
 }
 
 // Server handles all HTTP requests.
@@ -42,6 +46,7 @@ type Server struct {
 	restores  restoreJobs
 	notify    *notifier
 	pokeCheck chan struct{}
+	agents    *agentFiles
 	fakeSalt  []byte
 	now       func() time.Time
 }
@@ -58,6 +63,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	return &Server{
 		cfg:      cfg,
+		agents:   newAgentFiles(cfg.AgentSource, filepath.Join(cfg.Storage, "agents")),
 		store:    cfg.Store,
 		hub:      newHub(),
 		sizes:    newSizeCache(cfg.ReposDir, 5*time.Minute),
@@ -101,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/pcs", s.user(s.handlePCs))
 	mux.Handle("POST /api/pcs/join", s.user(s.handleCreateJoinCode))
 	mux.Handle("GET /api/pcs/join/{code}", s.user(s.handleJoinStatus))
+	mux.Handle("GET /api/pcs/join/{code}/download/{target}", s.user(s.handleAgentDownload))
 	mux.Handle("GET /api/pcs/{pc}", s.user(s.handlePC))
 	mux.Handle("POST /api/pcs/{pc}/entries", s.user(s.handleCreateEntry))
 	mux.Handle("PUT /api/pcs/{pc}/entries/{entry}", s.user(s.handleUpdateEntry))

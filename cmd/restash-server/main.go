@@ -112,14 +112,15 @@ func run() error {
 		webFS = os.DirFS(cfg.webDir)
 	}
 	srv, err := server.New(ctx, server.Config{
-		PublicURL:  cfg.publicURL,
-		Store:      st,
-		Repos:      trash.NewProxy(cfg.restServer, repos, trashDir),
-		ReposDir:   repos,
-		Storage:    cfg.storage,
-		Web:        webFS,
-		Version:    version,
-		NtfyServer: cfg.ntfy,
+		PublicURL:   cfg.publicURL,
+		Store:       st,
+		Repos:       trash.NewProxy(cfg.restServer, repos, trashDir),
+		ReposDir:    repos,
+		Storage:     cfg.storage,
+		Web:         webFS,
+		Version:     version,
+		NtfyServer:  cfg.ntfy,
+		AgentSource: env("RESTASH_AGENT_SOURCE", server.DefaultAgentSource(version)),
 	})
 	if err != nil {
 		return err

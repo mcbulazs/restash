@@ -1,5 +1,9 @@
 // restash-agent backs up folders on this PC to a restash server.
 //
+// Downloaded from the website as restash-setup-K7Q2MX, it sets itself up
+// when opened: links the PC, asks for the password, installs the service.
+//
+//	restash-agent setup K7Q2MX         link this PC and install the service
 //	restash-agent join K7Q2MX          link this PC (code from "Add a PC")
 //	restash-agent run                  stay linked, back up on schedule
 //	restash-agent backup ~/Documents   back up folders
@@ -45,6 +49,8 @@ var version = "dev"
 const usage = `usage: restash-agent <command> [flags]
 
 commands:
+  setup      link this PC and keep it backed up in the background
+  status     show whether this PC is linked and the service is running
   join       link this PC to your account with the code from "Add a PC"
   unlock     type your password again to unlock this PC's backups
   run        stay linked and back up entries on their schedules
@@ -54,6 +60,8 @@ commands:
   snapshots  list backups
   restore    restore a backup into a folder
   forget     remove old backups by retention rules
+  install    run in the background and start with the PC
+  uninstall  stop running in the background
   version    show the version
 
 Run "restash-agent <command> -h" for a command's flags.
@@ -62,6 +70,10 @@ Run "restash-agent <command> -h" for a command's flags.
 type command func(ctx context.Context, cfgPath string, args []string) error
 
 var commands = map[string]command{
+	"setup":     cmdSetup,
+	"install":   cmdInstall,
+	"uninstall": cmdUninstall,
+	"status":    cmdStatus,
 	"join":      cmdJoin,
 	"unlock":    cmdUnlock,
 	"run":       cmdRun,
@@ -83,11 +95,17 @@ var commands = map[string]command{
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	args := os.Args[1:]
+	// Opened as a downloaded setup file (double-click): set up.
+	if len(args) == 0 && isSetupName(os.Args[0]) {
+		args = []string{"setup"}
+	}
+	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
+		pause()
 		os.Exit(2)
 	}
-	cmd, ok := commands[os.Args[1]]
+	cmd, ok := commands[args[0]]
 	if !ok {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -102,13 +120,19 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := cmd(ctx, cfgPath, os.Args[2:]); err != nil {
+	err := cmd(ctx, cfgPath, args[1:])
+	if errors.Is(err, agent.ErrUpdated) {
+		fmt.Fprintln(os.Stderr, "restash-agent: updated; the service starts the new version")
+		os.Exit(3)
+	}
+	if err != nil {
 		fail(err)
 	}
 }
 
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "restash-agent:", err)
+	pause()
 	os.Exit(1)
 }
 
@@ -182,30 +206,45 @@ func unlock(ctx context.Context, cfgPath string, cfg *agent.Config, email string
 
 func cmdJoin(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("join", flag.ExitOnError)
-	server := fs.String("server", "https://restash.bulazs.com", "restash server address")
+	server := fs.String("server", serverDefault(), "restash server address")
 	name := fs.String("name", agent.PCName(), "name for this PC")
 	force := fs.Bool("force", false, "replace this PC's existing link")
 	fs.Parse(args)
 	if fs.NArg() != 1 {
 		return errors.New(`usage: restash-agent join [-server URL] <code from "Add a PC">`)
 	}
-	*server = strings.TrimSuffix(*server, "/")
-	if err := agent.CheckServer(*server); err != nil {
+	home, _ := os.UserHomeDir()
+	if err := joinPC(ctx, cfgPath, *server, *name, fs.Arg(0), home, *force); err != nil {
 		return err
 	}
-	if _, err := agent.Load(cfgPath); err == nil && !*force {
+	fmt.Fprintln(os.Stderr, "\nAll set. Pick folders to back up on the website, on this PC's page.")
+	fmt.Fprintln(os.Stderr, "Run `restash-agent install` so backups happen in the background.")
+	return nil
+}
+
+// joinPC links this PC with a code, unlocks it with the password, and
+// offers to bring back another PC's files.
+func joinPC(ctx context.Context, cfgPath, server, name, code, home string, force bool) error {
+	server = strings.TrimSuffix(server, "/")
+	if err := agent.CheckServer(server); err != nil {
+		return err
+	}
+	if _, err := agent.Load(cfgPath); err == nil && !force {
 		return fmt.Errorf("this PC is already linked (%s); use -force to link it again", cfgPath)
 	}
-	c := agent.NewClient(*server, "", "")
-	res, err := c.Join(ctx, proto.JoinRequest{Code: fs.Arg(0), Name: *name, OS: agent.OSName(), Arch: runtime.GOARCH, Version: version})
+	c := agent.NewClient(server, "", "")
+	res, err := c.Join(ctx, proto.JoinRequest{Code: strings.ToUpper(code), Name: name, OS: agent.OSName(), Arch: runtime.GOARCH, Version: version})
 	if err != nil {
 		return err
 	}
-	cfg := &agent.Config{Server: *server, PCID: res.PCID, Token: res.Token}
+	cfg := &agent.Config{Server: server, PCID: res.PCID, Token: res.Token}
+	if runtime.GOOS == "windows" {
+		cfg.Home = home // the service runs as SYSTEM, whose home isn't the person's
+	}
 	if err := cfg.Save(cfgPath); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Linked %q to %s's account (%s).\n\n", *name, res.Name, res.Email)
+	fmt.Fprintf(os.Stderr, "Linked %q to %s's account (%s).\n\n", name, res.Name, res.Email)
 	if err := unlock(ctx, cfgPath, cfg, res.Email); err != nil {
 		return fmt.Errorf("%w\nThe PC is linked; run `restash-agent unlock` to try again", err)
 	}
@@ -214,10 +253,9 @@ func cmdJoin(ctx context.Context, cfgPath string, args []string) error {
 		if pw := lastPassword; pw != "" {
 			if accountKey, _, err := agent.AccountKey(ctx, apiClient(cfg), pw); err == nil {
 				fmt.Fprintln(os.Stderr, "\nThis PC is new to restash, but your account has backups of other PCs.")
-				home, _ := os.UserHomeDir()
 				r, rerr := newRestic(cfg)
 				if rerr == nil {
-					if err := pullFrom(ctx, cfgPath, cfg, r, others, accountKey, "", "", home); err != nil {
+					if err := pullFrom(ctx, cfgPath, cfg, r, others, accountKey, "", "", cfg.HomeDir()); err != nil {
 						fmt.Fprintln(os.Stderr, "Couldn't bring the files back:", err)
 					}
 				}
@@ -225,9 +263,6 @@ func cmdJoin(ctx context.Context, cfgPath string, args []string) error {
 		}
 	}
 	lastPassword = ""
-
-	fmt.Fprintln(os.Stderr, "\nAll set. Pick folders to back up on the website, on this PC's page.")
-	fmt.Fprintln(os.Stderr, "Keep `restash-agent run` going so backups happen on their schedules.")
 	return nil
 }
 
@@ -248,6 +283,16 @@ func cmdUnlock(ctx context.Context, cfgPath string, args []string) error {
 }
 
 func cmdRun(ctx context.Context, cfgPath string, args []string) error {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	asService := fs.Bool("service", false, "running as the background service (also keeps the agent updated)")
+	fs.Parse(args)
+	if handled, err := runAsService(func(ctx context.Context) error { return runAgent(ctx, cfgPath, *asService) }); handled {
+		return err
+	}
+	return runAgent(ctx, cfgPath, *asService)
+}
+
+func runAgent(ctx context.Context, cfgPath string, asService bool) error {
 	cfg, r, err := load(cfgPath)
 	if err != nil {
 		return err
@@ -269,9 +314,21 @@ func cmdRun(ctx context.Context, cfgPath string, args []string) error {
 			slog.Warn("couldn't fetch entries", "err", err)
 		}
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	if asService && os.Getenv("RESTASH_NO_UPDATE") == "" {
+		if exe, err := os.Executable(); err == nil {
+			u := &agent.Updater{Current: version, Exe: exe, API: envOr("RESTASH_UPDATE_API", agent.ReleasesAPI), Download: envOr("RESTASH_UPDATE_DOWNLOAD", agent.ReleasesDownload)}
+			go func() {
+				if err := u.KeepUpdated(ctx, rn.Busy, slog.Info); errors.Is(err, agent.ErrUpdated) {
+					cancel(err)
+				}
+			}()
+		}
+	}
 	go rn.Run(ctx)
-	slog.Info("linking to the server", "server", cfg.Server, "pc", cfg.PCID)
-	return agent.RunLink(ctx, cfg, version, agent.LinkHandler{
+	slog.Info("linking to the server", "server", cfg.Server, "pc", cfg.PCID, "version", version)
+	err = agent.RunLink(ctx, cfg, version, agent.LinkHandler{
 		OnUp: func() {
 			slog.Info("linked; this PC shows as online")
 			go syncEntries() // pick up changes made while offline
@@ -281,18 +338,28 @@ func cmdRun(ctx context.Context, cfgPath string, args []string) error {
 			slog.Info("asked to back up now", "entry", entry)
 			go rn.RunNow(entry)
 		},
-		OnBrowse: func(data string) (string, error) { return agent.AnswerBrowse(entryKey, cfg.PCID, data) },
+		OnBrowse: func(data string) (string, error) { return agent.AnswerBrowse(entryKey, cfg.PCID, cfg.HomeDir(), data) },
 		OnRestore: func(id, data string, send func(proto.Message)) {
 			slog.Info("restoring files", "job", id)
 			rn.HandleRestore(ctx, id, data, send)
 			slog.Info("restore finished", "job", id)
 		},
 	})
+	if cause := context.Cause(ctx); errors.Is(cause, agent.ErrUpdated) {
+		return cause
+	}
+	return err
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 func cmdPull(ctx context.Context, cfgPath string, args []string) error {
 	fs := flag.NewFlagSet("pull", flag.ExitOnError)
-	home, _ := os.UserHomeDir()
 	into := fs.String("into", "", "folder to put the files in (default: <home>/Restored from <PC>)")
 	from := fs.String("from", "", "name of the PC to bring back (asked if not given)")
 	fs.Parse(args)
@@ -328,7 +395,7 @@ func cmdPull(ctx context.Context, cfgPath string, args []string) error {
 		}
 		break
 	}
-	return pullFrom(ctx, cfgPath, cfg, r, others, accountKey, *from, *into, home)
+	return pullFrom(ctx, cfgPath, cfg, r, others, accountKey, *from, *into, cfg.HomeDir())
 }
 
 // pullFrom asks which PC to bring back (unless from names one), then

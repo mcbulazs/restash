@@ -4,43 +4,51 @@ import { minutesLeft } from "../format.ts";
 import { Link } from "../router.tsx";
 import { CopyButton, ErrorBox, Icon } from "../components/ui.tsx";
 
-const RELEASES = "https://github.com/mcbulazs/restash/releases/latest/download/";
-
 type OS = "windows" | "macos" | "linux";
 
 interface Build {
+  target: string; // as the server names it: <goos>-<goarch>
   os: OS;
   label: string;
-  file: string;
 }
 
-const builds: Record<OS, Build> = {
-  windows: { os: "windows", label: "Windows", file: "restash-agent-windows-amd64.exe" },
-  macos: { os: "macos", label: "macOS", file: "restash-agent-darwin-arm64" },
-  linux: { os: "linux", label: "Linux", file: "restash-agent-linux-amd64" },
-};
-
-const otherBuilds: { label: string; file: string }[] = [
-  { label: "Windows (ARM)", file: "restash-agent-windows-arm64.exe" },
-  { label: "macOS (Intel)", file: "restash-agent-darwin-amd64" },
-  { label: "Linux (ARM)", file: "restash-agent-linux-arm64" },
+const builds: Build[] = [
+  { target: "windows-amd64", os: "windows", label: "Windows" },
+  { target: "darwin-arm64", os: "macos", label: "macOS" },
+  { target: "linux-amd64", os: "linux", label: "Linux" },
+  { target: "windows-arm64", os: "windows", label: "Windows (ARM)" },
+  { target: "darwin-amd64", os: "macos", label: "macOS (Intel)" },
+  { target: "linux-arm64", os: "linux", label: "Linux (ARM)" },
 ];
 
-function detectOS(): OS {
+function detect(): string {
   const p = (navigator.platform || navigator.userAgent).toLowerCase();
-  if (p.includes("win")) return "windows";
-  if (p.includes("mac")) return "macos";
-  return "linux";
+  if (p.includes("win")) return "windows-amd64";
+  if (p.includes("mac")) return "darwin-arm64";
+  return p.includes("aarch64") || p.includes("arm") ? "linux-arm64" : "linux-amd64";
 }
 
-function command(b: Build, server: string, code: string): string {
-  const join = `join -server ${server} ${code}`;
-  if (b.os === "windows") return `.\\${b.file} ${join}`;
-  return `chmod +x ${b.file} && ./${b.file} ${join}`;
+/** Chrome can tell ARM from Intel; other browsers keep the guess. */
+function detectArch(set: (t: string) => void, current: string) {
+  const uad = (navigator as Navigator & { userAgentData?: { getHighEntropyValues(h: string[]): Promise<{ architecture?: string }> } }).userAgentData;
+  uad?.getHighEntropyValues(["architecture"]).then(
+    (v) => {
+      const arm = v.architecture === "arm";
+      const [os] = current.split("-");
+      if (os === "darwin") set(arm ? "darwin-arm64" : "darwin-amd64");
+      else set(`${os}-${arm ? "arm64" : "amd64"}`);
+    },
+    () => {},
+  );
+}
+
+function fileName(b: Build, code: string): string {
+  const base = `restash-setup-${code}`;
+  return b.os === "windows" ? base + ".exe" : b.os === "macos" ? base + ".zip" : base;
 }
 
 export function AddPCPage() {
-  const [os, setOS] = useState<OS>(detectOS);
+  const [target, setTarget] = useState<string>(detect);
   const [code, setCode] = useState<JoinCode | null>(null);
   const [status, setStatus] = useState<JoinStatus>({ status: "waiting" });
   const [error, setError] = useState<unknown>(null);
@@ -52,6 +60,7 @@ export function AddPCPage() {
     api.createJoinCode().then(setCode, setError);
   };
   useEffect(newCode, []);
+  useEffect(() => detectArch(setTarget, detect()), []);
 
   // Poll until the PC is ready or the code expires.
   useEffect(() => {
@@ -63,7 +72,10 @@ export function AddPCPage() {
     return () => clearInterval(t);
   }, [code, status.status]);
 
-  const b = builds[os];
+  const b = builds.find((x) => x.target === target) ?? builds[0];
+  const os = b.os;
+  const file = code ? fileName(b, code.code) : "";
+  const linuxCmd = code ? `chmod +x ~/Downloads/restash-setup-${code.code} && ~/Downloads/restash-setup-${code.code}` : "";
   const joined = status.status === "joined" || status.status === "ready";
   const pcName = "pc" in status ? status.pc.name : "";
 
@@ -85,46 +97,62 @@ export function AddPCPage() {
             <span className="step-num">1</span>
             <div className="step-body">
               <h2>Download restash</h2>
-              <p className="muted">We detected {b.label}. restash runs from a terminal for now. It's one file with everything it needs inside.</p>
-              <a className="btn btn-primary btn-big" href={RELEASES + b.file}>
-                <Icon.download /> Download for {b.label}
-              </a>
-              <span className="file-note">
-                <Icon.file /> {b.file}
-              </span>
+              <p className="muted">For {b.label}. One file with everything it needs; it's made for this account, so use it on the PC you're adding.</p>
+              {code ? (
+                <a className="btn btn-primary btn-big" href={`/api/pcs/join/${code.code}/download/${b.target}`} download={file}>
+                  <Icon.download /> Download for {b.label}
+                </a>
+              ) : (
+                <button className="btn btn-primary btn-big" disabled>
+                  <Icon.download /> Getting it ready…
+                </button>
+              )}
+              {code && (
+                <span className="file-note">
+                  <Icon.file /> {file}
+                </span>
+              )}
             </div>
           </div>
           <div className={`step ${joined ? "done" : ""}`}>
             <span className="step-num">2</span>
             <div className="step-body">
-              <h2>Link it with this code</h2>
-              <p className="muted">In a terminal, in the folder you downloaded it to, run:</p>
-              {code ? (
-                <>
-                  <div className="command">
-                    <code>{command(b, code.server, code.code)}</code>
-                    <CopyButton text={command(b, code.server, code.code)} className="" />
-                  </div>
-                  <p className="small">
-                    Your code is <span className="mono">{code.code}</span>. It works once and expires in {minutesLeft(code.expiresAt)} minutes.
-                  </p>
-                </>
-              ) : (
-                <p className="small">Getting a code…</p>
-              )}
+              <h2>Open it</h2>
               {os === "windows" && (
-                <div className="notice">
-                  <Icon.shield />
-                  <span>Windows may say it protected your PC. Click "More info", then "Run anyway". restash is open source and not signed by Microsoft yet.</span>
-                </div>
+                <>
+                  <p className="muted">Open the file you downloaded. When Windows asks whether restash may make changes, click Yes: it sets itself up to run in the background.</p>
+                  <div className="notice">
+                    <Icon.shield />
+                    <span>Windows may say it protected your PC. Click "More info", then "Run anyway". restash is open source and not signed by Microsoft yet.</span>
+                  </div>
+                </>
               )}
               {os === "macos" && (
-                <div className="notice">
-                  <Icon.shield />
-                  <span>
-                    If macOS won't open it, go to System Settings → Privacy & Security and click "Open Anyway". restash is open source and not signed by Apple yet.
-                  </span>
-                </div>
+                <>
+                  <p className="muted">Open the zip you downloaded, then open the restash-setup file inside it. A Terminal window opens and sets it up.</p>
+                  <div className="notice">
+                    <Icon.shield />
+                    <span>
+                      If macOS won't open it, go to System Settings → Privacy & Security and click "Open Anyway". restash is open source and not signed by Apple yet.
+                    </span>
+                  </div>
+                </>
+              )}
+              {os === "linux" && (
+                <>
+                  <p className="muted">In a terminal, run:</p>
+                  {code && (
+                    <div className="command">
+                      <code>{linuxCmd}</code>
+                      <CopyButton text={linuxCmd} className="" />
+                    </div>
+                  )}
+                </>
+              )}
+              {code && (
+                <p className="small">
+                  It's linked to this code: <span className="mono">{code.code}</span>. It works once and expires in {minutesLeft(code.expiresAt)} minutes.
+                </p>
               )}
             </div>
           </div>
@@ -148,7 +176,7 @@ export function AddPCPage() {
                   <h2>{pcName} is ready</h2>
                 </div>
                 <p className="muted" style={{ marginTop: 14 }}>
-                  It's linked and unlocked. Next, pick the folders to back up. Keep <span className="mono">restash-agent run</span> going on it so backups run on time.
+                  It's linked, unlocked and runs in the background. Next, pick the folders to back up.
                 </p>
                 <Link href={"pc" in status ? `/pcs/${status.pc.id}/entries/new` : "/"} className="btn btn-primary" style={{ marginTop: 18 }}>
                   Pick folders
@@ -168,7 +196,7 @@ export function AddPCPage() {
               <>
                 <h2>This code expired</h2>
                 <p className="muted" style={{ marginTop: 14 }}>
-                  Codes work for an hour. Get a new one and use it in the command.
+                  Codes work for an hour. Get a new one and download restash again.
                 </p>
                 <button className="btn btn-primary" style={{ marginTop: 18 }} onClick={newCode}>
                   Get a new code
@@ -190,19 +218,19 @@ export function AddPCPage() {
           <div className="card card-pad">
             <h3>Setting up a different kind of PC?</h3>
             <div className="os-links">
-              {(Object.keys(builds) as OS[])
-                .filter((o) => o !== os)
+              {builds
+                .filter((o) => o.target !== b.target)
                 .map((o) => (
-                  <a key={o} href="#" onClick={(e) => (e.preventDefault(), setOS(o))}>
-                    <Icon.download /> {builds[o].label}
+                  <a key={o.target} href="#" onClick={(e) => (e.preventDefault(), setTarget(o.target))}>
+                    <Icon.download /> {o.label}
                   </a>
                 ))}
-              {otherBuilds.map((o) => (
-                <a key={o.file} href={RELEASES + o.file}>
-                  <Icon.download /> {o.label}
-                </a>
-              ))}
             </div>
+            {code && (
+              <p className="small" style={{ marginTop: 14 }}>
+                Already have restash-agent? Run <span className="mono">restash-agent setup -server {code.server} {code.code}</span>
+              </p>
+            )}
           </div>
         </div>
       </div>

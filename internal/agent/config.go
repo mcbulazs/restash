@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/mcbulazs/restash/internal/restic"
@@ -22,10 +23,30 @@ type Config struct {
 	Token  string `json:"token"`
 	// RepoKey is the unlocked restic password; empty until unlocked.
 	RepoKey string `json:"repo_key,omitempty"`
+	// Home is the person's home folder, for when the agent runs as a
+	// system service (Windows) whose own home is somewhere else.
+	Home string `json:"home,omitempty"`
 }
 
-// DefaultPath is <user config dir>/restash/agent.json.
+// HomeDir is the person's home folder: Home if set, else the current user's.
+func (c *Config) HomeDir() string {
+	if c != nil && c.Home != "" {
+		return c.Home
+	}
+	h, _ := os.UserHomeDir()
+	return h
+}
+
+// DefaultPath is <user config dir>/restash/agent.json; on Windows, where
+// the agent runs as a system service, it's %ProgramData%\restash\agent.json.
 func DefaultPath() (string, error) {
+	if runtime.GOOS == "windows" {
+		pd := os.Getenv("ProgramData")
+		if pd == "" {
+			return "", errors.New("%ProgramData% isn't set")
+		}
+		return filepath.Join(pd, "restash", "agent.json"), nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -63,6 +84,9 @@ func Load(path string) (*Config, error) {
 // Save writes the config to path, readable only by the current user.
 func (c *Config) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if err := secureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
