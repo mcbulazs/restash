@@ -2,7 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { api, type BrowseResult, type EntryConfig, type PCDetail, type Retention, type Schedule, type ScheduleKind } from "../api.ts";
 import { bytes } from "../format.ts";
 import { Link, navigate } from "../router.tsx";
-import { ErrorBox, Icon, UnlockCard } from "../components/ui.tsx";
+import { ConfirmModal, ErrorBox, Icon, UnlockCard } from "../components/ui.tsx";
 import {
   browse,
   clock,
@@ -58,6 +58,7 @@ export function EditEntryPage({ pcID, entryID }: { pcID: string; entryID: string
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -141,17 +142,7 @@ export function EditEntryPage({ pcID, entryID }: { pcID: string; entryID: string
     }
   };
 
-  const remove = async () => {
-    if (!confirm(`Delete "${name}"? It stops backing up. Backups already made stay on the server and can still be restored.`)) return;
-    setBusy(true);
-    try {
-      await api.deleteEntry(pc.id, loaded.entryID);
-      navigate(back);
-    } catch (e) {
-      setError(e);
-      setBusy(false);
-    }
-  };
+  const remove = () => setRemoving(true);
 
   const num = (field: keyof Retention, label: string, unit: string) => (
     <div className="keep-row" key={field}>
@@ -332,6 +323,35 @@ export function EditEntryPage({ pcID, entryID }: { pcID: string; entryID: string
             </section>
           </div>
           <ErrorBox error={error} />
+          {removing && (
+            <ConfirmModal
+              title={`Delete "${name}"?`}
+              onClose={() => setRemoving(false)}
+              actions={[
+                {
+                  label: "Keep its backups",
+                  run: async () => {
+                    await api.deleteEntry(pc.id, loaded.entryID, false);
+                    navigate(back);
+                  },
+                },
+                {
+                  label: "Delete its backups too",
+                  danger: true,
+                  run: async () => {
+                    await api.deleteEntry(pc.id, loaded.entryID, true);
+                    navigate(back);
+                  },
+                },
+              ]}
+            >
+              <p>It stops backing up either way.</p>
+              <p className="small">
+                Kept backups can still be restored, and you can delete them later on the PC's page. Deleted ones are removed by {pc.name} the next time it's
+                online; the server keeps them in its trash for a while after that.
+              </p>
+            </ConfirmModal>
+          )}
           <div className="form-actions">
             {!isNew && (
               <button type="button" className="link-button danger" onClick={remove} disabled={busy}>

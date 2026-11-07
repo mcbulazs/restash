@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,5 +46,16 @@ func TestCheckServer(t *testing.T) {
 func TestWSURL(t *testing.T) {
 	if wsURL("https://a.com") != "wss://a.com" || wsURL("http://localhost:1") != "ws://localhost:1" {
 		t.Fatal("wsURL")
+	}
+}
+
+func TestLoadNoPermission(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	path := filepath.Join(t.TempDir(), "agent.json")
+	os.WriteFile(path, []byte(`{}`), 0o000)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "can't read") {
+		t.Fatalf("got %v", err)
 	}
 }

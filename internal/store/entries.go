@@ -110,3 +110,12 @@ func (s *Store) DeleteEntry(ctx context.Context, pcID, id string) error {
 
 // NewEntryID makes an id for a new entry.
 func NewEntryID() string { return newID() }
+
+// Entry finds one of a PC's entries.
+func (s *Store) Entry(ctx context.Context, pcID, id string) (*Entry, error) {
+	e, err := scanEntry(s.db.QueryRowContext(ctx, "SELECT "+entryCols+" FROM entries WHERE pc_id = ? AND id = ?", pcID, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return e, err
+}

@@ -200,3 +200,24 @@ func TestEmbeddedRestServer(t *testing.T) {
 		t.Fatalf("not in the trash: %v", err)
 	}
 }
+
+func TestTrashRepo(t *testing.T) {
+	p, _, root := setup(t, http.StatusOK)
+	writeFile(t, filepath.Join(root, "repos", "pc1", "config"))
+	if err := p.TrashRepo("pc1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "repos", "pc1")); !os.IsNotExist(err) {
+		t.Fatal("repo still there")
+	}
+	moved, _ := filepath.Glob(filepath.Join(root, "trash", "2026-11-07", "removed-pc1-*", "config"))
+	if len(moved) != 1 {
+		t.Fatal("repo not in the trash")
+	}
+	if err := p.TrashRepo("pc1"); err != nil {
+		t.Fatalf("missing repo: %v", err)
+	}
+	if err := p.TrashRepo("../etc"); err == nil {
+		t.Fatal("bad name accepted")
+	}
+}

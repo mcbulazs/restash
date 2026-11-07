@@ -157,6 +157,15 @@ var migrations = []string{
 
 	// Storage limit per person, set by the admin; 0 means none.
 	`ALTER TABLE users ADD COLUMN storage_limit INTEGER NOT NULL DEFAULT 0;`,
+
+	// Backups to remove: an entry's snapshots, forgotten by its PC (only the
+	// PC has the key) the next time it's online.
+	`CREATE TABLE purges (
+		pc_id      TEXT NOT NULL REFERENCES pcs(id) ON DELETE CASCADE,
+		entry      TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (pc_id, entry)
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

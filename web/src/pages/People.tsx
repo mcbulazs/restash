@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api, type Person } from "../api.ts";
+import { Link } from "../router.tsx";
 import { bytes, daysBetween, shortDate } from "../format.ts";
 import { Avatar, CopyButton, ErrorBox, Field, Icon, useLoad } from "../components/ui.tsx";
 
@@ -160,7 +161,9 @@ export function PeoplePage() {
             <div className="person">
               <Avatar name={p.name} c={i} big />
               <div>
-                <div className="cell-title truncate">{p.name}</div>
+                <Link href={`/people/${p.id}`} className="cell-title truncate person-link">
+                  {p.name}
+                </Link>
                 <div className="cell-sub truncate">{p.email}</div>
                 {/* On phones the Stored column is hidden; the limit lives here. */}
                 <button className="link-button limit-link limit-link-narrow" onClick={() => setEditing(p.id)}>

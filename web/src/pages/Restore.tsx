@@ -3,10 +3,10 @@ import { api, ApiError, type PC, type PCDetail, type RestoreJobStatus } from "..
 import { bytes, shortDate, when } from "../format.ts";
 import { Link } from "../router.tsx";
 import { ErrorBox, Icon, UnlockCard } from "../components/ui.tsx";
-import { NeedUnlock, openEntries, pcEntryKey, shortPath } from "../entries.ts";
+import { NeedUnlock, openEntries, openPCKey, pcEntryKey, shortPath } from "../entries.ts";
 import { getAccountKey } from "../account.ts";
 import { Backup, saveAs, type Node, type Snapshot } from "../restic.ts";
-import { labelActivity, labelPCKey, labelRestore, open, pcPassword, seal } from "../vault.ts";
+import { labelActivity, labelRestore, open, pcPassword, seal } from "../vault.ts";
 import { FolderPicker } from "./EditEntry.tsx";
 
 const enc = new TextEncoder();
@@ -72,10 +72,8 @@ export function RestorePage({ id }: { id: string }) {
     (async () => {
       try {
         const pc = await api.pc(id);
-        const account = getAccountKey();
-        if (!account) throw new NeedUnlock();
         if (!pc.pcKey) throw new Error(`${pc.name} hasn't been set up on the PC yet, so it has no backups.`);
-        const pcKey = await open(account, pc.pcKey, labelPCKey(pc.id));
+        const pcKey = await openPCKey(pc);
         const password = pcPassword(pcKey);
         const ek = await pcEntryKey(pc);
         const entries = await openEntries(ek, pc.id, pc.entries);

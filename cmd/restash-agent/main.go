@@ -349,6 +349,15 @@ func runAgent(ctx context.Context, cfgPath string, asService bool) error {
 	if cause := context.Cause(ctx); errors.Is(cause, agent.ErrUpdated) {
 		return cause
 	}
+	// Removed on the website (or the link is gone): as a service, stay idle
+	// instead of exiting, so the service manager doesn't restart it over
+	// and over.
+	if errors.Is(err, agent.ErrUnlinked) && asService {
+		slog.Error("this PC isn't linked to restash anymore (it was removed, or its link is gone), so it doesn't back up. " +
+			"Set it up again from Add a PC, or run `restash-agent uninstall`.")
+		<-ctx.Done()
+		return nil
+	}
 	return err
 }
 

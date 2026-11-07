@@ -2258,3 +2258,99 @@ a.feed-item:hover {
     animation: none;
   }
 }
+
+/* ---------- Confirmations ---------- */
+.confirm-modal {
+  max-width: 520px;
+}
+
+.confirm-body {
+  padding: 0 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.confirm-body p {
+  margin: 0;
+}
+
+.confirm-type {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.confirm-foot {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.btn-danger {
+  background: var(--rust);
+  color: #fff;
+  border-color: var(--rust);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #9c3b23;
+}
+
+.btn-danger:disabled,
+.confirm-foot .btn:disabled {
+  opacity: 0.5;
+}
+
+/* Things to clean up on a PC page and a person's page. */
+.leftover {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.leftover:first-of-type {
+  border-top: 0;
+}
+
+.danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-entries {
+  margin-top: 6px;
+}
+
+.admin-entry {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 150px 90px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 640px) {
+  .admin-entry {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .admin-entry .col-when,
+  .admin-entry .col-size {
+    display: none;
+  }
+}
+
+.cleanup-bare {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.leftover .grow {
+  flex: 1;
+  min-width: 0;
+}

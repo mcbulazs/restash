@@ -112,6 +112,29 @@ export interface PCDetail extends PC {
   timezone: string;
   entries: EntryRecord[];
   runs: RunDetail[];
+  leftovers: Leftover[];
+  purges: string[]; // entries whose backups the PC still has to remove
+}
+
+/** Backups made by an entry that no longer exists (or by hand). */
+export interface Leftover {
+  entry: string; // "manual" for backups made by hand
+  runs: number;
+  last: string;
+  bytes: number;
+}
+
+/** What the admin sees of someone's PC: entries without names. */
+export interface AdminPC extends PC {
+  entries: { id: string; schedule: Schedule; createdAt: string; lastOk: RunDetail | null }[];
+  leftovers: Leftover[];
+  purges: string[];
+}
+
+export interface PersonDetail {
+  person: User;
+  storage: Storage;
+  pcs: AdminPC[];
 }
 
 export interface JoinCode {
@@ -240,7 +263,12 @@ export const api = {
   createEntry: (pc: string, body: { id: string; schedule: Schedule; config: string }) => call<EntryRecord>("POST", `/api/pcs/${encodeURIComponent(pc)}/entries`, body),
   updateEntry: (pc: string, id: string, body: { schedule: Schedule; config: string }) =>
     call<void>("PUT", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`, body),
-  deleteEntry: (pc: string, id: string) => call<void>("DELETE", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`),
+  deleteEntry: (pc: string, id: string, withBackups = false) =>
+    call<void>("DELETE", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}${withBackups ? "?backups=delete" : ""}`),
+  deleteBackups: (pc: string, entry: string) => call<void>("POST", `/api/pcs/${encodeURIComponent(pc)}/purges`, { entry }),
+  removePC: (pc: string) => call<void>("DELETE", `/api/pcs/${encodeURIComponent(pc)}`),
+  person: (id: string) => call<PersonDetail>("GET", `/api/people/${encodeURIComponent(id)}`),
+  removePerson: (id: string) => call<void>("DELETE", `/api/people/${encodeURIComponent(id)}`),
   running: (pc: string) => call<{ online: boolean; running: Running[] }>("GET", `/api/pcs/${encodeURIComponent(pc)}/backups/running`),
   runNow: (pc: string, entry = "") => call<void>("POST", `/api/pcs/${encodeURIComponent(pc)}/run`, { entry }),
   browse: (pc: string, data: string) => call<{ data: string }>("POST", `/api/pcs/${encodeURIComponent(pc)}/browse`, { data }),

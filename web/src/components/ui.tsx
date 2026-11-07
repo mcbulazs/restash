@@ -336,3 +336,81 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
 export function goHome() {
   navigate("/");
 }
+
+export interface ConfirmAction {
+  label: string;
+  danger?: boolean;
+  run: () => Promise<void>;
+}
+
+/** Asks before something that can't simply be undone. With confirmText,
+ * that text has to be typed before the actions work. */
+export function ConfirmModal({
+  title,
+  children,
+  actions,
+  confirmText,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  actions: ConfirmAction[];
+  confirmText?: string;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && !busy && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy]);
+  const ready = !confirmText || typed.trim() === confirmText;
+  const go = async (a: ConfirmAction) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await a.run();
+      onClose();
+    } catch (e) {
+      setError(e);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
+      <div className="modal confirm-modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head">
+          <h2>{title}</h2>
+          <button type="button" className="icon-button" aria-label="Close" onClick={onClose} disabled={busy}>
+            <Icon.x />
+          </button>
+        </div>
+        <div className="confirm-body">
+          {children}
+          {confirmText && (
+            <label className="confirm-type">
+              <span className="small">
+                Type <strong>{confirmText}</strong> to confirm
+              </span>
+              <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus autoComplete="off" />
+            </label>
+          )}
+          <ErrorBox error={error} />
+        </div>
+        <div className="modal-foot confirm-foot">
+          <button type="button" className="btn btn-link" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <div className="spacer" />
+          {actions.map((a) => (
+            <button key={a.label} type="button" className={`btn ${a.danger ? "btn-danger" : "btn-secondary"}`} disabled={busy || !ready} onClick={() => go(a)}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

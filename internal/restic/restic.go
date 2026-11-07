@@ -198,6 +198,8 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 	werr := c.Wait()
 	var exit *exec.ExitError
 	switch {
+	case errors.As(werr, &exit) && exit.ExitCode() == 10:
+		return nil, ErrNoRepo
 	// Exit code 3: snapshot made, but some files couldn't be read.
 	case werr != nil && !(errors.As(werr, &exit) && exit.ExitCode() == 3):
 		return sum, fmt.Errorf("restic backup: %w", werr)
@@ -210,6 +212,9 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 	}
 	return sum, nil
 }
+
+// ErrNoRepo means the repo isn't on the server (restic's exit code 10).
+var ErrNoRepo = errors.New("the repo doesn't exist")
 
 // ErrIncomplete means the snapshot was made but some files couldn't be read.
 var ErrIncomplete = errors.New("some files could not be read")
@@ -295,6 +300,10 @@ func (r *Restic) Snapshots(ctx context.Context, noLock bool) ([]Snapshot, error)
 	c := r.cmd(ctx, args...)
 	c.Stdout, c.Stderr = &out, &errs
 	if err := c.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 10 {
+			return nil, ErrNoRepo
+		}
 		return nil, fmt.Errorf("listing backups: %w: %s", err, strings.Join(Messages(errs.String()), " "))
 	}
 	var list []Snapshot

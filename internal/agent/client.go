@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -113,6 +114,17 @@ func (c *Client) OtherPCs(ctx context.Context) ([]proto.OtherPC, error) {
 func (c *Client) Storage(ctx context.Context) (proto.Storage, error) {
 	var out proto.Storage
 	return out, c.do(ctx, "GET", "/api/agent/storage", nil, &out)
+}
+
+// Purges are the entries whose backups the server asks this PC to remove.
+func (c *Client) Purges(ctx context.Context) ([]string, error) {
+	var out []string
+	return out, c.do(ctx, "GET", "/api/agent/purges", nil, &out)
+}
+
+// PurgeDone says an entry's backups are removed.
+func (c *Client) PurgeDone(ctx context.Context, entry string) error {
+	return c.do(ctx, "POST", "/api/agent/purges/"+url.PathEscape(entry)+"/done", nil, nil)
 }
 
 // ReportBackup sends a backup result.

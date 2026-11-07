@@ -68,6 +68,9 @@ func Load(path string) (*Config, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotJoined
 	}
+	if errors.Is(err, os.ErrPermission) {
+		return nil, permissionError(path)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +82,15 @@ func Load(path string) (*Config, error) {
 		return nil, ErrNotJoined
 	}
 	return &c, CheckServer(c.Server)
+}
+
+// permissionError explains that the config needs more rights than this
+// terminal has. On Windows it's only open to administrators.
+func permissionError(path string) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("this needs an administrator: open Command Prompt with right-click → Run as administrator, then run the command again (%s is only open to administrators)", path)
+	}
+	return fmt.Errorf("can't read %s: run this as the user the agent was set up for", path)
 }
 
 // Save writes the config to path, readable only by the current user.
@@ -95,6 +107,9 @@ func (c *Config) Save(path string) error {
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return permissionError(path)
+		}
 		return err
 	}
 	return os.Rename(tmp, path)

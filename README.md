@@ -115,6 +115,20 @@ docker compose logs restash | grep signup   # link for the admin account
 People join by invite link (People → Invite someone). restash doesn't send
 email; you send the link yourself.
 
+Deleting an entry asks whether to keep its backups (still restorable, and
+listed on the PC's page under "Backups of removed entries" until deleted)
+or delete them too. Only the PC can delete its backups, since only it has
+the key: the server queues the request and the PC carries it out the next
+time it's online (`restic forget`, then prune), so the data goes through
+the trash like everything else. A whole PC can be removed from its page:
+it's unlinked at once and its repo moves to the trash.
+
+The admin's People page links to each person: their PCs and entries (by
+number, since entry names are locked with the person's key), schedules,
+last backups and sizes. From there the admin can delete entries with or
+without their backups, delete leftover backups, remove PCs, and remove the
+person with everything they had.
+
 The admin can give each person a storage limit (People → the size under
 Stored). It covers all of that person's PCs, counts the encrypted backups
 as they sit on the server (not the trash), and shows on their Your PCs

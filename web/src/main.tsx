@@ -1,13 +1,14 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, ApiError, type User } from "./api.ts";
-import { forgetKeys } from "./account.ts";
+import { forgetKeys, keepKeyFor } from "./account.ts";
 import { navigate, usePath } from "./router.tsx";
 import { TopBar } from "./components/ui.tsx";
 import { LoginPage, RecoverPage, SignupPage } from "./pages/Auth.tsx";
 import { PCsPage } from "./pages/PCs.tsx";
 import { AddPCPage } from "./pages/AddPC.tsx";
 import { PeoplePage } from "./pages/People.tsx";
+import { PersonPage } from "./pages/Person.tsx";
 import { PCDetailPage } from "./pages/PCDetail.tsx";
 import { EditEntryPage } from "./pages/EditEntry.tsx";
 import { RestorePage } from "./pages/Restore.tsx";
@@ -22,7 +23,10 @@ function App() {
 
   useEffect(() => {
     api.me().then(
-      (me) => setUser(me.user),
+      (me) => {
+        keepKeyFor(me.user.id);
+        setUser(me.user);
+      },
       (e) => {
         if (e instanceof ApiError && e.status === 401) setUser(null);
         else setUser(null);
@@ -57,6 +61,7 @@ function App() {
 
   let page;
   const pcMatch = path.match(/^\/pcs\/([a-z2-7]+)$/);
+  const personMatch = path.match(/^\/people\/([a-z2-7]+)$/);
   const restoreMatch = path.match(/^\/pcs\/([a-z2-7]+)\/restore$/);
   const entryMatch = path.match(/^\/pcs\/([a-z2-7]+)\/entries\/([a-z2-7]+|new)$/);
   if (path === "/add") page = <AddPCPage />;
@@ -65,6 +70,7 @@ function App() {
   else if (restoreMatch) page = <RestorePage key={restoreMatch[1]} id={restoreMatch[1]} />;
   else if (entryMatch) page = <EditEntryPage key={entryMatch[2]} pcID={entryMatch[1]} entryID={entryMatch[2]} />;
   else if (path === "/people" && user.admin) page = <PeoplePage />;
+  else if (personMatch && user.admin) page = <PersonPage key={personMatch[1]} id={personMatch[1]} />;
   else page = <PCsPage />;
 
   return (

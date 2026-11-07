@@ -53,7 +53,8 @@ func Unlock(ctx context.Context, cfg *Config, password string, r *restic.Restic)
 		err := r.Init(ctx)
 		r.Stdout = out
 		if err != nil {
-			return fmt.Errorf("creating the backup repo: %w", err)
+			return fmt.Errorf("the server couldn't create this PC's backup storage (%w). "+
+				"Its log says why; usually the storage folder isn't writable by restash", err)
 		}
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -122,8 +123,60 @@ func (rn *Runner) Sync(ctx context.Context) error {
 	rn.entries = out
 	rn.mu.Unlock()
 	slog.Info("entries up to date", "count", len(out))
+	// Backups the owner (or the admin) asked to remove. An older server
+	// doesn't know this; that's fine.
+	if purges, err := rn.client.Purges(ctx); err == nil {
+		for _, entry := range purges {
+			rn.enqueue(purgePrefix + entry)
+		}
+	}
 	rn.poke()
 	return nil
+}
+
+// purgePrefix marks a queued job that removes an entry's backups, so it
+// runs one at a time with backups (restic would refuse to forget while a
+// backup holds the repo).
+const purgePrefix = "purge:"
+
+// purge removes all of an entry's snapshots, cleans up their data right
+// away (it goes to the server's trash) and tells the server.
+func (rn *Runner) purge(ctx context.Context, entry string) {
+	rn.busy.Add(1)
+	defer rn.busy.Add(-1)
+	r := *rn.restic
+	r.Stdout, r.Stderr = nil, nil
+	snaps, err := r.Snapshots(ctx, false)
+	if err != nil && !errors.Is(err, restic.ErrNoRepo) {
+		slog.Warn("couldn't list backups to remove; trying again later", "entry", entry, "err", err)
+		return
+	}
+	var ids []string
+	for _, s := range snaps {
+		if slices.Contains(s.Tags, "entry:"+entry) {
+			ids = append(ids, s.ID)
+		}
+	}
+	if len(ids) > 0 {
+		slog.Info("removing an entry's backups", "entry", entry, "snapshots", len(ids))
+		if err := r.Run(ctx, append([]string{"forget"}, ids...)...); err != nil {
+			slog.Warn("couldn't remove an entry's backups; trying again later", "entry", entry, "err", err)
+			return
+		}
+		rn.mu.Lock()
+		rn.state.PruneNeeded = true
+		delete(rn.state.LastRun, entry)
+		rn.mu.Unlock()
+		rn.prune(ctx, false)
+	}
+	dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := rn.client.PurgeDone(dctx, entry); err != nil {
+		slog.Warn("couldn't tell the server the backups are removed", "entry", entry, "err", err)
+		return
+	}
+	rn.saveState()
+	slog.Info("an entry's backups are removed", "entry", entry)
 }
 
 func (rn *Runner) poke() {
@@ -181,7 +234,11 @@ func (rn *Runner) work(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case id := <-rn.jobs:
-			rn.runEntry(ctx, id)
+			if entry, ok := strings.CutPrefix(id, purgePrefix); ok {
+				rn.purge(ctx, entry)
+			} else {
+				rn.runEntry(ctx, id)
+			}
 			rn.mu.Lock()
 			delete(rn.queued, id)
 			rn.mu.Unlock()
@@ -273,6 +330,10 @@ func (rn *Runner) runEntry(ctx context.Context, id string) {
 		slog.Info("backup done", "entry", e.ID, "files", sum.TotalFilesProcessed, "added", sum.DataAddedPacked)
 	case limited != "":
 		detail = limited
+	case errors.Is(err, restic.ErrNoRepo):
+		detail = "This PC's backup storage is missing on the server, so nothing was backed up. " +
+			"If it was removed on purpose, run restash-agent unlock on this PC (as administrator on Windows) to start over with an empty one."
+		slog.Error("backup failed: the repo is missing on the server", "entry", e.ID)
 	default:
 		msgs := restic.Messages(errs.String())
 		if len(msgs) == 0 && err != nil {

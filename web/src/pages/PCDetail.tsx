@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type PCDetail, type RunDetail, type Running } from "../api.ts";
 import { bytes, daysBetween, percentText, shortDate, startOfDay, timeLeft, when } from "../format.ts";
 import { Link, navigate } from "../router.tsx";
-import { ErrorBox, Icon, nights, Tally, UnlockCard } from "../components/ui.tsx";
+import { ConfirmModal, ErrorBox, Icon, nights, Tally, UnlockCard } from "../components/ui.tsx";
 import { detailText, isLate, NeedUnlock, openDetail, openEntries, pcEntryKey, retentionText, scheduleText, shortPath, skipsText, type Entry } from "../entries.ts";
 
 const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -297,6 +297,113 @@ export function PCDetailPage({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      <Cleanup pc={pc} names={nameOf} onChange={() => setTick((n) => n + 1)} />
+    </div>
+  );
+}
+
+/** Backups left by removed entries, removals waiting for the PC, and
+ * removing the PC itself. Used by the owner here and by the admin. */
+export function Cleanup({
+  pc,
+  names,
+  onChange,
+  onRemoved = () => navigate("/"),
+  bare = false,
+}: {
+  pc: Pick<PCDetail, "id" | "name" | "online" | "leftovers" | "purges">;
+  names?: Map<string, string>;
+  onChange: () => void;
+  onRemoved?: () => void;
+  bare?: boolean; // inside another card
+}) {
+  const [asking, setAsking] = useState<"" | "pc" | string>("");
+  const leftover = pc.leftovers.find((l) => l.entry === asking);
+  const what = (entry: string) => (entry === "manual" ? "Backups made by hand" : (names?.get(entry) ?? "A removed entry"));
+  return (
+    <div className={bare ? "cleanup-bare" : "card card-pad"} style={{ marginTop: 24 }}>
+      {pc.leftovers.length > 0 && (
+        <>
+          <h2>Backups of removed entries</h2>
+          <p className="small" style={{ margin: "4px 0 10px" }}>
+            They can still be restored, and take space until they're deleted.
+          </p>
+          {pc.leftovers.map((l) => (
+            <div className="leftover" key={l.entry}>
+              <div className="grow">
+                <div className="cell-main">{what(l.entry)}</div>
+                <div className="cell-sub">
+                  {l.runs} backup{l.runs === 1 ? "" : "s"}, the last {when(l.last).toLowerCase()}
+                  {l.bytes ? `, ${bytes(l.bytes)}` : ""}
+                </div>
+              </div>
+              <button className="btn btn-secondary" onClick={() => setAsking(l.entry)}>
+                Delete these backups
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+      {pc.purges.length > 0 && (
+        <p className="small" style={{ marginTop: pc.leftovers.length ? 14 : 0 }}>
+          Deleting the backups of {pc.purges.length} removed entr{pc.purges.length === 1 ? "y" : "ies"}.{" "}
+          {pc.online ? `${pc.name} is on it.` : `${pc.name} does it the next time it's online.`}
+        </p>
+      )}
+      <div className="danger-zone" style={{ marginTop: pc.leftovers.length || pc.purges.length ? 20 : 0 }}>
+        <div>
+          <h2>Remove {pc.name}</h2>
+          <p className="small">It stops backing up and all its backups are deleted.</p>
+        </div>
+        <button className="btn btn-secondary" onClick={() => setAsking("pc")}>
+          Remove this PC
+        </button>
+      </div>
+      {leftover && (
+        <ConfirmModal
+          title="Delete these backups?"
+          onClose={() => setAsking("")}
+          actions={[
+            {
+              label: "Delete backups",
+              danger: true,
+              run: async () => {
+                await api.deleteBackups(pc.id, leftover.entry);
+                onChange();
+              },
+            },
+          ]}
+        >
+          <p>
+            {what(leftover.entry)}: {leftover.runs} backup{leftover.runs === 1 ? "" : "s"}. They can't be restored afterwards.
+          </p>
+          <p className="small">{pc.name} deletes them the next time it's online; the server keeps them in its trash for a while after that.</p>
+        </ConfirmModal>
+      )}
+      {asking === "pc" && (
+        <ConfirmModal
+          title={`Remove ${pc.name}?`}
+          confirmText={pc.name}
+          onClose={() => setAsking("")}
+          actions={[
+            {
+              label: "Remove it",
+              danger: true,
+              run: async () => {
+                await api.removePC(pc.id);
+                onRemoved();
+              },
+            },
+          ]}
+        >
+          <p>It's unlinked right away and stops backing up. All of its backups are deleted, so they can't be restored.</p>
+          <p className="small">
+            The server keeps them in its trash for a while, where the admin can still get them back. To use the PC with restash again, add it again from Add
+            a PC.
+          </p>
+        </ConfirmModal>
+      )}
     </div>
   );
 }

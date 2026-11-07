@@ -2,8 +2,8 @@
 // in plain words. Entry names, folders, skips and run details are locked
 // with a key only this browser (after login) and the PC can make.
 import { api, type BrowseResult, type EntryConfig, type EntryRecord, type PCDetail, type Retention, type Schedule } from "./api.ts";
-import { getAccountKey } from "./account.ts";
-import { entryKey, labelBrowse, labelEntry, labelPCKey, labelRunDetail, open, randomBytes, seal } from "./vault.ts";
+import { forgetKeys, getAccountKey } from "./account.ts";
+import { entryKey, labelBrowse, labelEntry, labelPCKey, labelRunDetail, LockedError, open, randomBytes, seal } from "./vault.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -14,12 +14,25 @@ export class NeedUnlock extends Error {
   }
 }
 
-/** The entry key of a PC; throws NeedUnlock if the account key is gone. */
-export async function pcEntryKey(pc: Pick<PCDetail, "id" | "pcKey">): Promise<Uint8Array> {
+/** A PC's own key. Throws NeedUnlock if the account key is gone, or doesn't
+ * fit (one left over from another login): the page then asks for the
+ * password instead of failing. */
+export async function openPCKey(pc: Pick<PCDetail, "id" | "pcKey">): Promise<Uint8Array> {
   const account = getAccountKey();
   if (!account) throw new NeedUnlock();
   if (!pc.pcKey) throw new Error("This PC hasn't been unlocked on the PC yet.");
-  return entryKey(await open(account, pc.pcKey, labelPCKey(pc.id)));
+  try {
+    return await open(account, pc.pcKey, labelPCKey(pc.id));
+  } catch (e) {
+    if (!(e instanceof LockedError)) throw e;
+    forgetKeys();
+    throw new NeedUnlock();
+  }
+}
+
+/** The entry key of a PC; see openPCKey for what it throws. */
+export async function pcEntryKey(pc: Pick<PCDetail, "id" | "pcKey">): Promise<Uint8Array> {
+  return entryKey(await openPCKey(pc));
 }
 
 export interface Entry {

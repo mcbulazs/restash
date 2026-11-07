@@ -93,7 +93,18 @@ func (s *Server) handlePC(w http.ResponseWriter, r *http.Request) {
 		Timezone string          `json:"timezone"`
 		Entries  []entryJSON     `json:"entries"`
 		Runs     []runDetailJSON `json:"runs"`
+		// Backups of entries that are gone, and removals waiting for the PC.
+		Leftovers []store.Leftover `json:"leftovers"`
+		Purges    []string         `json:"purges"`
 	}{pcJSON: desc[0], PCKey: pc.PCKey, Timezone: pc.Timezone, Entries: []entryJSON{}, Runs: []runDetailJSON{}}
+	if out.Leftovers, err = s.store.Leftovers(ctx, pc.ID); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if out.Purges, err = s.store.Purges(ctx, pc.ID); err != nil {
+		internalError(w, r, err)
+		return
+	}
 	for _, e := range entries {
 		j := entryJSON{ID: e.ID, Schedule: e.Schedule, Config: e.Config, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 		if b, ok := last[e.ID]; ok {
@@ -188,18 +199,27 @@ func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleDeleteEntry deletes an entry (owner or admin). With
+// ?backups=delete its backups go too; otherwise they stay restorable.
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
-	pc := s.ownPC(w, r)
+	pc := s.pcFor(w, r, true)
 	if pc == nil {
 		return
 	}
-	switch err := s.store.DeleteEntry(r.Context(), pc.ID, r.PathValue("entry")); {
+	entry := r.PathValue("entry")
+	switch err := s.store.DeleteEntry(r.Context(), pc.ID, entry); {
 	case isNotFound(err):
 		httpError(w, http.StatusNotFound, "no such entry")
 		return
 	case err != nil:
 		internalError(w, r, err)
 		return
+	}
+	if r.URL.Query().Get("backups") == "delete" {
+		if err := s.store.AddPurge(r.Context(), pc.ID, entry); err != nil {
+			internalError(w, r, err)
+			return
+		}
 	}
 	s.entriesChanged(r, pc.ID)
 	w.WriteHeader(http.StatusNoContent)

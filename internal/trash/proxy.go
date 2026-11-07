@@ -111,7 +111,13 @@ func (o object) file() string {
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		p.forward.ServeHTTP(w, r)
+		rec := &statusRecorder{ResponseWriter: w}
+		p.forward.ServeHTTP(rec, r)
+		if rec.status >= 500 {
+			// rest-server logs the cause just before this.
+			slog.Error("storage request failed: check that restash can write its storage folder",
+				"method", r.Method, "path", r.URL.Path, "status", rec.status, "repos", p.repos)
+		}
 		return
 	}
 	if r.URL.RawPath != "" {
@@ -164,4 +170,58 @@ func syncDir(dir string) {
 		f.Sync()
 		f.Close()
 	}
+}
+
+// statusRecorder notes the status a handler answered with.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// Flush passes through, so streamed answers aren't held back.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// TrashRepo moves a whole repo (a removed PC's) into today's trash, as
+// trash/<day>/removed-<name>-<time>. It's emptied with the rest, so the
+// removal can be undone until then by moving the folder back. A repo
+// that doesn't exist is fine.
+func (p *Proxy) TrashRepo(name string) error {
+	if !segmentPattern.MatchString(name) {
+		return fmt.Errorf("bad repo name %q", name)
+	}
+	src := filepath.Join(p.repos, name)
+	if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	now := p.now().UTC()
+	dayDir := filepath.Join(p.trash, now.Format(dayLayout))
+	if err := os.MkdirAll(dayDir, 0o700); err != nil {
+		return err
+	}
+	dst := filepath.Join(dayDir, "removed-"+name+"-"+now.Format("150405"))
+	if err := os.Rename(src, dst); err != nil {
+		return err
+	}
+	syncDir(p.repos)
+	syncDir(dayDir)
+	slog.Info("moved a removed PC's repo to the trash", "repo", name, "to", dst)
+	return nil
 }

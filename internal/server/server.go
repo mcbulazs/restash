@@ -111,6 +111,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/pcs/join/{code}/download/{target}", s.user(s.handleAgentDownload))
 	mux.Handle("GET /api/pcs/{pc}", s.user(s.handlePC))
 	mux.Handle("GET /api/pcs/{pc}/backups/running", s.user(s.handleProgress))
+	mux.Handle("POST /api/pcs/{pc}/purges", s.user(s.handlePurge))
+	mux.Handle("DELETE /api/pcs/{pc}", s.user(s.handleRemovePC))
 	mux.Handle("POST /api/pcs/{pc}/entries", s.user(s.handleCreateEntry))
 	mux.Handle("PUT /api/pcs/{pc}/entries/{entry}", s.user(s.handleUpdateEntry))
 	mux.Handle("DELETE /api/pcs/{pc}/entries/{entry}", s.user(s.handleDeleteEntry))
@@ -122,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 	// Admin
 	mux.Handle("GET /api/people", s.admin(s.handlePeople))
 	mux.Handle("PUT /api/people/{id}/limit", s.admin(s.handleSetLimit))
+	mux.Handle("GET /api/people/{id}", s.admin(s.handlePerson))
+	mux.Handle("DELETE /api/people/{id}", s.admin(s.handleRemovePerson))
 	mux.Handle("GET /api/storage", s.user(s.handleStorage))
 	mux.Handle("POST /api/invites", s.admin(s.handleCreateInvite))
 	mux.Handle("DELETE /api/invites/{token}", s.admin(s.handleDeleteInvite))
@@ -134,6 +138,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/agent/entries", s.agent(s.handleAgentEntries))
 	mux.Handle("GET /api/agent/pcs", s.agent(s.handleAgentPCs))
 	mux.Handle("GET /api/agent/storage", s.agent(s.handleAgentStorage))
+	mux.Handle("GET /api/agent/purges", s.agent(s.handleAgentPurges))
+	mux.Handle("POST /api/agent/purges/{entry}/done", s.agent(s.handleAgentPurgeDone))
 	mux.Handle("GET /api/agent/ws", s.agent(s.handleAgentWS))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, http.StatusNotFound, "not found") })
