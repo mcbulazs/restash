@@ -8,6 +8,8 @@ import { LoginPage, RecoverPage, SignupPage } from "./pages/Auth.tsx";
 import { PCsPage } from "./pages/PCs.tsx";
 import { AddPCPage } from "./pages/AddPC.tsx";
 import { PeoplePage } from "./pages/People.tsx";
+import { PCDetailPage } from "./pages/PCDetail.tsx";
+import { EditEntryPage } from "./pages/EditEntry.tsx";
 
 const PUBLIC = ["/login", "/signup", "/recover"];
 
@@ -52,7 +54,11 @@ function App() {
   };
 
   let page;
+  const pcMatch = path.match(/^\/pcs\/([a-z2-7]+)$/);
+  const entryMatch = path.match(/^\/pcs\/([a-z2-7]+)\/entries\/([a-z2-7]+|new)$/);
   if (path === "/add") page = <AddPCPage />;
+  else if (pcMatch) page = <PCDetailPage key={pcMatch[1]} id={pcMatch[1]} />;
+  else if (entryMatch) page = <EditEntryPage key={entryMatch[2]} pcID={entryMatch[1]} entryID={entryMatch[2]} />;
   else if (path === "/people" && user.admin) page = <PeoplePage />;
   else page = <PCsPage />;
 

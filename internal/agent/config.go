@@ -33,6 +33,11 @@ func DefaultPath() (string, error) {
 	return filepath.Join(dir, "restash", "agent.json"), nil
 }
 
+// StatePath is where the agent keeps its run times, next to the config.
+func StatePath(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "state.json")
+}
+
 // ErrNotJoined means this PC hasn't been linked yet.
 var ErrNotJoined = errors.New("this PC isn't linked to restash yet: run `restash-agent join <code>`")
 

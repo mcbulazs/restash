@@ -97,6 +97,12 @@ func (c *Client) SetKey(ctx context.Context, sealed string) error {
 	return c.do(ctx, "PUT", "/api/agent/key", proto.SetKey{PCKey: sealed}, nil)
 }
 
+// Entries fetches this PC's entries (settings still locked).
+func (c *Client) Entries(ctx context.Context) ([]proto.Entry, error) {
+	var out []proto.Entry
+	return out, c.do(ctx, "GET", "/api/agent/entries", nil, &out)
+}
+
 // ReportBackup sends a backup result.
 func (c *Client) ReportBackup(ctx context.Context, r proto.BackupReport) error {
 	return c.do(ctx, "POST", "/api/agent/backups", r, nil)

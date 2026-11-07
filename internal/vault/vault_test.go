@@ -29,6 +29,7 @@ type vectors struct {
 	Sealed     string `json:"sealed"`
 	AuthHash   string `json:"authHash"`
 	PCPassword string `json:"pcPassword"`
+	EntryKey   string `json:"entryKey"`
 }
 
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
@@ -64,6 +65,7 @@ func compute(t *testing.T) vectors {
 	}
 	v.AuthHash = HashAuth(k.Auth)
 	v.PCPassword = PCPassword(key)
+	v.EntryKey = b64(EntryKey(key))
 	return v
 }
 

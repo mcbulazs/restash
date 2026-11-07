@@ -197,6 +197,35 @@ func CheckAuth(auth []byte, hash string) bool {
 	return subtle.ConstantTimeCompare([]byte(HashAuth(auth)), []byte(hash)) == 1
 }
 
+// EntryKey is the key that locks a PC's entry settings (names, folders,
+// skips) and error messages. It is derived from the PC's key, so only the
+// PC and its owner can read them.
+func EntryKey(pcKey []byte) []byte {
+	k, err := hkdf.Key(sha256.New, pcKey, nil, "restash entries v1", keyLen)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
+
+// LabelEntry is the label for an entry's settings.
+func LabelEntry(pcID, entryID string) string { return "restash entry " + pcID + " " + entryID }
+
+// LabelRunDetail is the label for the details of one backup run.
+func LabelRunDetail(pcID string) string { return "restash run detail " + pcID }
+
+// LabelBrowse is the label for folder listings between browser and PC.
+func LabelBrowse(pcID string) string { return "restash browse " + pcID }
+
+// PCKeyFromPassword reverses PCPassword.
+func PCKeyFromPassword(p string) ([]byte, error) {
+	b, err := base64.RawURLEncoding.DecodeString(p)
+	if err != nil || len(b) != keyLen {
+		return nil, errors.New("bad PC key")
+	}
+	return b, nil
+}
+
 // PCPassword turns a PC's raw key into the password restic is given.
 func PCPassword(key []byte) string {
 	return base64.RawURLEncoding.EncodeToString(key)

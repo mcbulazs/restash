@@ -23,6 +23,25 @@ The crypto lives in [internal/vault](internal/vault) (Go) and
 [web/src/vault.ts](web/src/vault.ts) (browser); both are tested against the
 same vectors.
 
+## Entries
+
+A PC backs up one or more **entries**: a folder (or a few) with its own
+schedule (every hour, every day, every week, or only by hand), skip
+patterns and retention ("every backup for 2 days, then one a day for 30
+days, then one a month for 2 years"). They're set up on the PC's page.
+
+- The entry's name, folders, skips and retention are locked with a key
+  derived from the PC's key, so only the owner's browser and the PC can
+  read them. The server stores only the schedule, so it can tell when a
+  backup is late. Error messages from failed runs are locked the same way.
+- "Add a folder" asks the PC for its folders over its live link; the
+  request and the listing are locked too.
+- All entries share the PC's restic repo. Each snapshot is tagged
+  `entry:<id>`, and retention runs per tag, so one entry's rules never
+  remove another entry's backups. Data freed by retention is pruned at most
+  once a day and lands in the server's trash.
+- A run missed while the PC was off happens as soon as it's back on.
+
 ## Server
 
 The server runs in Docker next to restic's
@@ -64,7 +83,8 @@ It asks for your account password, unlocks the PC's key and creates its
 repo. Then:
 
 ```sh
-restash-agent run                    # stay linked (the PC shows as online)
+restash-agent run                    # stay linked and back up entries on schedule
+restash-agent entries                # list entries and when they run next
 restash-agent backup -exclude node_modules ~/Documents ~/Projects
 restash-agent snapshots
 restash-agent restore -target ~/restored latest

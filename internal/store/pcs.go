@@ -19,18 +19,19 @@ type PC struct {
 	Arch         string
 	AgentVersion string
 	PCKey        string // restic key locked with the account key; empty until set up
+	Timezone     string // IANA name, e.g. Europe/Budapest
 	CreatedAt    time.Time
 	LastSeen     *time.Time
 }
 
-const pcCols = "id, user_id, name, os, arch, agent_version, coalesce(pc_key, ''), created_at, last_seen, token_hash"
+const pcCols = "id, user_id, name, os, arch, agent_version, coalesce(pc_key, ''), timezone, created_at, last_seen, token_hash"
 
 func scanPC(row interface{ Scan(...any) error }) (*PC, string, error) {
 	var p PC
 	var created int64
 	var seen sql.NullInt64
 	var tokenHash string
-	err := row.Scan(&p.ID, &p.UserID, &p.Name, &p.OS, &p.Arch, &p.AgentVersion, &p.PCKey, &created, &seen, &tokenHash)
+	err := row.Scan(&p.ID, &p.UserID, &p.Name, &p.OS, &p.Arch, &p.AgentVersion, &p.PCKey, &p.Timezone, &created, &seen, &tokenHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}
@@ -193,12 +194,15 @@ func (s *Store) SetPCKey(ctx context.Context, id, sealed string) error {
 }
 
 // TouchPC records that the agent was online now.
-func (s *Store) TouchPC(ctx context.Context, id, version string) error {
-	q, args := "UPDATE pcs SET last_seen = ? WHERE id = ?", []any{unix(s.now()), id}
-	if version != "" {
-		q, args = "UPDATE pcs SET last_seen = ?, agent_version = ? WHERE id = ?", []any{unix(s.now()), version, id}
-	}
-	_, err := s.db.ExecContext(ctx, q, args...)
+func (s *Store) TouchPC(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE pcs SET last_seen = ? WHERE id = ?", unix(s.now()), id)
+	return err
+}
+
+// HelloPC records what the agent said about itself when it connected.
+func (s *Store) HelloPC(ctx context.Context, id, version, timezone string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE pcs SET last_seen = ?, agent_version = ?, timezone = ? WHERE id = ?",
+		unix(s.now()), version, timezone, id)
 	return err
 }
 
@@ -213,34 +217,75 @@ type Backup struct {
 	Bytes      int64
 	Added      int64
 	Snapshot   string
+	Detail     string // locked with the entry key
 }
 
 // AddBackup records a backup run.
 func (s *Store) AddBackup(ctx context.Context, b Backup) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO backups(pc_id, entry, started_at, finished_at, ok, files, bytes, added, snapshot)
-		VALUES(?,?,?,?,?,?,?,?,?)`, b.PCID, b.Entry, unix(b.StartedAt), unix(b.FinishedAt), b.OK, b.Files, b.Bytes, b.Added, b.Snapshot)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO backups(pc_id, entry, started_at, finished_at, ok, files, bytes, added, snapshot, detail)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`, b.PCID, b.Entry, unix(b.StartedAt), unix(b.FinishedAt), b.OK, b.Files, b.Bytes, b.Added, b.Snapshot, b.Detail)
 	return err
+}
+
+const backupCols = "pc_id, entry, started_at, finished_at, ok, files, bytes, added, snapshot, detail"
+
+func scanBackups(rows *sql.Rows) ([]Backup, error) {
+	defer rows.Close()
+	var out []Backup
+	for rows.Next() {
+		var b Backup
+		var started, finished int64
+		if err := rows.Scan(&b.PCID, &b.Entry, &started, &finished, &b.OK, &b.Files, &b.Bytes, &b.Added, &b.Snapshot, &b.Detail); err != nil {
+			return nil, err
+		}
+		b.StartedAt, b.FinishedAt = time.Unix(started, 0), time.Unix(finished, 0)
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // BackupsSince returns runs that finished after since, per PC, oldest first.
 func (s *Store) BackupsSince(ctx context.Context, since time.Time) (map[string][]Backup, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT pc_id, entry, started_at, finished_at, ok, files, bytes, added, snapshot
-		FROM backups WHERE finished_at > ? ORDER BY finished_at`, unix(since))
+	rows, err := s.db.QueryContext(ctx, "SELECT "+backupCols+" FROM backups WHERE finished_at > ? ORDER BY finished_at", unix(since))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	list, err := scanBackups(rows)
+	if err != nil {
+		return nil, err
+	}
 	out := map[string][]Backup{}
-	for rows.Next() {
-		var b Backup
-		var started, finished int64
-		if err := rows.Scan(&b.PCID, &b.Entry, &started, &finished, &b.OK, &b.Files, &b.Bytes, &b.Added, &b.Snapshot); err != nil {
-			return nil, err
-		}
-		b.StartedAt, b.FinishedAt = time.Unix(started, 0), time.Unix(finished, 0)
+	for _, b := range list {
 		out[b.PCID] = append(out[b.PCID], b)
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// PCBackups returns a PC's runs that finished after since, newest first.
+func (s *Store) PCBackups(ctx context.Context, pcID string, since time.Time) ([]Backup, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+backupCols+" FROM backups WHERE pc_id = ? AND finished_at > ? ORDER BY finished_at DESC", pcID, unix(since))
+	if err != nil {
+		return nil, err
+	}
+	return scanBackups(rows)
+}
+
+// LastEntryBackups returns each entry's latest successful run for a PC.
+func (s *Store) LastEntryBackups(ctx context.Context, pcID string) (map[string]Backup, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+backupCols+` FROM backups b
+		WHERE pc_id = ? AND ok AND finished_at = (SELECT max(finished_at) FROM backups WHERE pc_id = b.pc_id AND entry = b.entry AND ok)`, pcID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := scanBackups(rows)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]Backup{}
+	for _, b := range list {
+		out[b.Entry] = b
+	}
+	return out, nil
 }
 
 // LastBackups returns each PC's latest run and latest successful run.

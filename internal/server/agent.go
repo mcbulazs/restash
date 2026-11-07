@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -148,44 +147,19 @@ func (s *Server) handleAgentBackup(w http.ResponseWriter, r *http.Request) {
 		StartedAt: req.StartedAt, FinishedAt: req.FinishedAt, OK: req.OK,
 		Files: req.Files, Bytes: req.Bytes, Added: req.Added, Snapshot: clean(req.Snapshot, 64),
 	}
+	if req.Detail != "" {
+		if len(req.Detail) > 16*1024 || !validSealed(req.Detail) {
+			httpError(w, http.StatusBadRequest, "bad detail")
+			return
+		}
+		b.Detail = req.Detail
+	}
 	if err := s.store.AddBackup(r.Context(), b); err != nil {
 		internalError(w, r, err)
 		return
 	}
 	s.sizes.forget(b.PCID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// hub tracks which agents are connected.
-type hub struct {
-	mu    sync.Mutex
-	conns map[string]*websocket.Conn
-}
-
-func newHub() *hub { return &hub{conns: map[string]*websocket.Conn{}} }
-
-func (h *hub) add(id string, c *websocket.Conn) {
-	h.mu.Lock()
-	old := h.conns[id]
-	h.conns[id] = c
-	h.mu.Unlock()
-	if old != nil {
-		old.Close(websocket.StatusPolicyViolation, "connected from somewhere else")
-	}
-}
-
-func (h *hub) remove(id string, c *websocket.Conn) {
-	h.mu.Lock()
-	if h.conns[id] == c {
-		delete(h.conns, id)
-	}
-	h.mu.Unlock()
-}
-
-func (h *hub) online(id string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.conns[id] != nil
 }
 
 // handleAgentWS keeps a link open to the agent, so the server knows it is
@@ -196,12 +170,12 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	c.SetReadLimit(64 * 1024)
-	s.hub.add(pc.ID, c)
-	s.store.TouchPC(context.Background(), pc.ID, "")
+	c.SetReadLimit(4 << 20) // folder listings can be big
+	conn := s.hub.add(pc.ID, c)
+	s.store.TouchPC(context.Background(), pc.ID)
 	defer func() {
-		s.hub.remove(pc.ID, c)
-		s.store.TouchPC(context.Background(), pc.ID, "")
+		s.hub.remove(pc.ID, conn)
+		s.store.TouchPC(context.Background(), pc.ID)
 		c.CloseNow()
 	}()
 
@@ -224,7 +198,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					c.CloseNow()
 					return
 				}
-				s.store.TouchPC(context.Background(), pc.ID, "")
+				s.store.TouchPC(context.Background(), pc.ID)
 			}
 		}
 	}()
@@ -236,7 +210,13 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		}
 		switch msg.Type {
 		case proto.TypeHello:
-			s.store.TouchPC(context.Background(), pc.ID, clean(msg.Version, 40))
+			tz := clean(msg.Timezone, 64)
+			if _, err := time.LoadLocation(tz); err != nil {
+				tz = ""
+			}
+			s.store.HelloPC(context.Background(), pc.ID, clean(msg.Version, 40), tz)
+		case proto.TypeBrowseResult:
+			s.hub.deliver(pc.ID, msg.ID, msg.Data)
 		}
 	}
 }

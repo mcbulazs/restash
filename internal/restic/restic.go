@@ -172,7 +172,11 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 	if err := c.Start(); err != nil {
 		return nil, err
 	}
-	sum, perr := parseBackupOutput(out)
+	errOut := r.Stderr
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+	sum, perr := parseBackupOutput(out, errOut)
 	werr := c.Wait()
 	var exit *exec.ExitError
 	switch {
@@ -193,14 +197,19 @@ func (r *Restic) Backup(ctx context.Context, opt BackupOptions) (*Summary, error
 var ErrIncomplete = errors.New("some files could not be read")
 
 // parseBackupOutput reads restic's JSON lines and keeps the summary. Status
-// lines are skipped; error lines are passed on to stderr.
-func parseBackupOutput(rd io.Reader) (*Summary, error) {
+// lines are skipped; files restic couldn't read are written to errOut as
+// "path: reason" lines.
+func parseBackupOutput(rd io.Reader, errOut io.Writer) (*Summary, error) {
 	var sum *Summary
 	sc := bufio.NewScanner(rd)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
 		var msg struct {
 			MessageType string `json:"message_type"`
+			Item        string `json:"item"`
+			Error       struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if json.Unmarshal(sc.Bytes(), &msg) != nil {
 			continue
@@ -212,8 +221,32 @@ func parseBackupOutput(rd io.Reader) (*Summary, error) {
 				return nil, err
 			}
 		case "error":
-			fmt.Fprintln(os.Stderr, sc.Text())
+			if msg.Item != "" {
+				fmt.Fprintf(errOut, "%s: %s\n", msg.Item, msg.Error.Message)
+			} else {
+				fmt.Fprintln(errOut, msg.Error.Message)
+			}
 		}
 	}
 	return sum, sc.Err()
+}
+
+// Messages turns restic's stderr into readable lines: JSON messages become
+// their text, empty lines are dropped.
+func Messages(stderr string) []string {
+	var out []string
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var msg struct {
+			Message string `json:"message"`
+		}
+		if strings.HasPrefix(line, "{") && json.Unmarshal([]byte(line), &msg) == nil && msg.Message != "" {
+			line = msg.Message
+		}
+		out = append(out, line)
+	}
+	return out
 }

@@ -148,10 +148,10 @@ export function AddPCPage() {
                   <h2>{pcName} is ready</h2>
                 </div>
                 <p className="muted" style={{ marginTop: 14 }}>
-                  It's linked and unlocked. Back it up with <span className="mono">restash-agent backup</span> and it shows up in your list.
+                  It's linked and unlocked. Next, pick the folders to back up. Keep <span className="mono">restash-agent run</span> going on it so backups run on time.
                 </p>
-                <Link href="/" className="btn btn-primary" style={{ marginTop: 18 }}>
-                  Back to your PCs
+                <Link href={"pc" in status ? `/pcs/${status.pc.id}/entries/new` : "/"} className="btn btn-primary" style={{ marginTop: 18 }}>
+                  Pick folders
                 </Link>
               </>
             ) : status.status === "joined" ? (

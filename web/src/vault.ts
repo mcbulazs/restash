@@ -80,6 +80,14 @@ export async function recoveryKeys(code: string): Promise<Keys> {
 
 export const LABEL_ACCOUNT_KEY = "restash account key";
 export const labelPCKey = (pcID: string) => "restash pc key " + pcID;
+export const labelEntry = (pcID: string, entryID: string) => `restash entry ${pcID} ${entryID}`;
+export const labelRunDetail = (pcID: string) => "restash run detail " + pcID;
+export const labelBrowse = (pcID: string) => "restash browse " + pcID;
+
+/** The key that locks a PC's entry settings and run details. */
+export function entryKey(pcKey: Uint8Array): Promise<Uint8Array> {
+  return hkdf(pcKey, "restash entries v1");
+}
 
 async function aes(key: Uint8Array): Promise<CryptoKey> {
   return subtle.importKey("raw", key as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);

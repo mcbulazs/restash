@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode }
 import type { Run, User } from "../api.ts";
 import { daysBetween, startOfDay } from "../format.ts";
 import { Link, navigate, usePath } from "../router.tsx";
+import { unlock } from "../account.ts";
 
 // ---------- Icons (24px, stroked) ----------
 
@@ -53,7 +54,82 @@ export const Icon = {
       <path d="M12 7v5l3 2" />
     </Svg>
   ),
+  folder: () => (
+    <Svg>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </Svg>
+  ),
+  calendar: () => (
+    <Svg>
+      <rect x="4" y="5" width="16" height="15" rx="2" />
+      <path d="M4 10h16M9 3v4M15 3v4" />
+    </Svg>
+  ),
+  x: (p: { size?: number }) => (
+    <Svg size={p.size}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </Svg>
+  ),
+  chevron: () => (
+    <Svg>
+      <path d="M9 6l6 6-6 6" />
+    </Svg>
+  ),
+  up: () => (
+    <Svg>
+      <path d="M12 19V5M6 11l6-6 6 6" />
+    </Svg>
+  ),
+  home: () => (
+    <Svg>
+      <path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z" />
+    </Svg>
+  ),
+  refresh: () => (
+    <Svg>
+      <path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v5h5" />
+    </Svg>
+  ),
 };
+
+/** Asks for the password again when this tab has no unlocked key. */
+export function UnlockCard({ onDone, what }: { onDone: () => void; what: string }) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  return (
+    <div className="card card-pad unlock">
+      <h2>Unlock {what}</h2>
+      <p className="muted" style={{ margin: "8px 0 18px" }}>
+        Names and folders are encrypted. Type your password to open them here; it stays on this page.
+      </p>
+      <form
+        className="invite-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError(null);
+          try {
+            await unlock(password);
+            onDone();
+          } catch (err) {
+            setError(err);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field label="Password" type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+        <button className="btn btn-primary" disabled={busy}>
+          {busy ? "Unlocking…" : "Unlock"}
+        </button>
+        <div style={{ flexBasis: "100%" }}>
+          <ErrorBox error={error} />
+        </div>
+      </form>
+    </div>
+  );
+}
 
 // ---------- Brand ----------
 
@@ -89,7 +165,7 @@ export function TopBar({ user, onLogout }: { user: User; onLogout: () => void })
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
-  const nav = [{ href: "/", label: "Your PCs", active: path === "/" || path.startsWith("/add") }];
+  const nav = [{ href: "/", label: "Your PCs", active: path === "/" || path.startsWith("/add") || path.startsWith("/pcs/") }];
   if (user.admin) nav.push({ href: "/people", label: "People", active: path.startsWith("/people") });
   return (
     <header className="topbar">

@@ -3,6 +3,7 @@ import { bytes, shortDate, when, daysBetween } from "../format.ts";
 import { Link } from "../router.tsx";
 import { ErrorBox, Icon, Legend, nights, Tally, useLoad } from "../components/ui.tsx";
 import { useEffect } from "react";
+import { schedulesSummary } from "../entries.ts";
 
 const SAFE_MS = 48 * 3600_000;
 
@@ -40,7 +41,7 @@ export function headline(pcs: PC[]): [string, string] {
 
 function statusLine(pc: PC): string {
   if (!pc.ready) return "Waiting for its password";
-  if (pc.online) return "Online now";
+  if (pc.online) return pc.schedules.length ? schedulesSummary(pc.schedules) : "Online now";
   if (pc.lastSeen) {
     const seen = new Date(pc.lastSeen);
     const today = daysBetween(seen, new Date()) === 0;
@@ -86,11 +87,12 @@ export function PCsPage() {
               <span className="col-tally">Last 30 days</span>
               <span>Last backup</span>
               <span className="col-stored">Stored</span>
+              <span />
             </div>
             {pcs.map((pc) => {
               const late = !isSafe(pc);
               return (
-                <div className="row pc-grid" key={pc.id}>
+                <Link href={`/pcs/${pc.id}`} className="row pc-grid row-link" key={pc.id}>
                   <div>
                     <div className="cell-title">{pc.name}</div>
                     <div className="cell-sub">{pc.os}</div>
@@ -105,7 +107,10 @@ export function PCsPage() {
                   <div className="col-stored cell-main" style={{ fontWeight: 400 }}>
                     {pc.ready ? bytes(pc.stored) : "–"}
                   </div>
-                </div>
+                  <span className="chev">
+                    <Icon.chevron />
+                  </span>
+                </Link>
               );
             })}
           </div>

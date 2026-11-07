@@ -112,6 +112,20 @@ var migrations = []string{
 		snapshot    TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX backups_pc_time ON backups(pc_id, finished_at);`,
+
+	`ALTER TABLE pcs ADD COLUMN timezone TEXT NOT NULL DEFAULT '';
+	ALTER TABLE backups ADD COLUMN detail TEXT NOT NULL DEFAULT '';
+	CREATE TABLE entries (
+		id         TEXT PRIMARY KEY,
+		pc_id      TEXT NOT NULL REFERENCES pcs(id) ON DELETE CASCADE,
+		kind       TEXT NOT NULL,
+		minute     INTEGER NOT NULL DEFAULT 0,
+		weekday    INTEGER NOT NULL DEFAULT 0,
+		config     TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE INDEX entries_pc ON entries(pc_id);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mcbulazs/restash/internal/schedule"
 	"github.com/mcbulazs/restash/internal/store"
 )
 
@@ -16,19 +17,20 @@ type runJSON struct {
 }
 
 type pcJSON struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	OS           string     `json:"os"`
-	Arch         string     `json:"arch"`
-	AgentVersion string     `json:"agentVersion"`
-	Ready        bool       `json:"ready"` // has its key and repo
-	Online       bool       `json:"online"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	LastSeen     *time.Time `json:"lastSeen"`
-	LastBackup   *time.Time `json:"lastBackup"`
-	LastOK       *time.Time `json:"lastOk"`
-	Stored       int64      `json:"stored"`
-	Recent       []runJSON  `json:"recent"` // last 30 days, oldest first
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	OS           string              `json:"os"`
+	Arch         string              `json:"arch"`
+	AgentVersion string              `json:"agentVersion"`
+	Ready        bool                `json:"ready"` // has its key and repo
+	Online       bool                `json:"online"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	LastSeen     *time.Time          `json:"lastSeen"`
+	LastBackup   *time.Time          `json:"lastBackup"`
+	LastOK       *time.Time          `json:"lastOk"`
+	Stored       int64               `json:"stored"`
+	Recent       []runJSON           `json:"recent"` // last 30 days, oldest first
+	Schedules    []schedule.Schedule `json:"schedules"`
 }
 
 func ptr(t time.Time, ok bool) *time.Time {
@@ -48,6 +50,10 @@ func (s *Server) describePCs(r *http.Request, pcs []store.PC) ([]pcJSON, error) 
 	if err != nil {
 		return nil, err
 	}
+	entries, err := s.store.AllEntries(r.Context())
+	if err != nil {
+		return nil, err
+	}
 	out := make([]pcJSON, 0, len(pcs))
 	for _, p := range pcs {
 		l, hasL := last[p.ID]
@@ -58,7 +64,10 @@ func (s *Server) describePCs(r *http.Request, pcs []store.PC) ([]pcJSON, error) 
 			CreatedAt: p.CreatedAt, LastSeen: p.LastSeen,
 			LastBackup: ptr(l, hasL), LastOK: ptr(lo, hasLO),
 			Stored: s.sizes.size(p.ID),
-			Recent: []runJSON{},
+			Recent: []runJSON{}, Schedules: []schedule.Schedule{},
+		}
+		for _, e := range entries[p.ID] {
+			j.Schedules = append(j.Schedules, e.Schedule)
 		}
 		if j.Online {
 			now := s.now()

@@ -56,6 +56,8 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
+func (e *env) now() time.Time { return time.Now() }
+
 func (e *env) client() *http.Client {
 	jar, _ := cookiejar.New(nil)
 	return &http.Client{Jar: jar}

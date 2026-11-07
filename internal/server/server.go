@@ -81,6 +81,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/pcs", s.user(s.handlePCs))
 	mux.Handle("POST /api/pcs/join", s.user(s.handleCreateJoinCode))
 	mux.Handle("GET /api/pcs/join/{code}", s.user(s.handleJoinStatus))
+	mux.Handle("GET /api/pcs/{pc}", s.user(s.handlePC))
+	mux.Handle("POST /api/pcs/{pc}/entries", s.user(s.handleCreateEntry))
+	mux.Handle("PUT /api/pcs/{pc}/entries/{entry}", s.user(s.handleUpdateEntry))
+	mux.Handle("DELETE /api/pcs/{pc}/entries/{entry}", s.user(s.handleDeleteEntry))
+	mux.Handle("POST /api/pcs/{pc}/run", s.user(s.handleRunNow))
+	mux.Handle("POST /api/pcs/{pc}/browse", s.user(s.handleBrowse))
 
 	// Admin
 	mux.Handle("GET /api/people", s.admin(s.handlePeople))
@@ -92,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/agent/account", s.agent(s.handleAgentAccount))
 	mux.Handle("PUT /api/agent/key", s.agent(s.handleAgentSetKey))
 	mux.Handle("POST /api/agent/backups", s.agent(s.handleAgentBackup))
+	mux.Handle("GET /api/agent/entries", s.agent(s.handleAgentEntries))
 	mux.Handle("GET /api/agent/ws", s.agent(s.handleAgentWS))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpError(w, http.StatusNotFound, "not found") })

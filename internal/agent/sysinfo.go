@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // PCName is the name the PC shows up with on the website.
@@ -40,4 +42,25 @@ func OSName() string {
 		return "Windows"
 	}
 	return runtime.GOOS
+}
+
+// Timezone is the PC's IANA time zone name (e.g. Europe/Budapest), or ""
+// if it can't be told. The server uses it to know when a backup is late.
+func Timezone() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		if _, err := time.LoadLocation(tz); err == nil {
+			return tz
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if target, err := filepath.EvalSymlinks("/etc/localtime"); err == nil {
+			if _, name, ok := strings.Cut(target, "zoneinfo/"); ok {
+				return name
+			}
+		}
+		if b, err := os.ReadFile("/etc/timezone"); err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return ""
 }

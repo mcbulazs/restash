@@ -1,7 +1,7 @@
 // restash-agent backs up folders on this PC to a restash server.
 //
 //	restash-agent join K7Q2MX          link this PC (code from "Add a PC")
-//	restash-agent run                  stay linked to the server
+//	restash-agent run                  stay linked, back up on schedule
 //	restash-agent backup ~/Documents   back up folders
 //	restash-agent snapshots            list backups
 //	restash-agent restore -target ~/restored latest
@@ -27,6 +27,7 @@ import (
 	"github.com/mcbulazs/restash/internal/agent"
 	"github.com/mcbulazs/restash/internal/proto"
 	"github.com/mcbulazs/restash/internal/restic"
+	"github.com/mcbulazs/restash/internal/vault"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -37,7 +38,8 @@ const usage = `usage: restash-agent <command> [flags]
 commands:
   join       link this PC to your account with the code from "Add a PC"
   unlock     type your password again to unlock this PC's backups
-  run        stay linked to the server (shows the PC as online)
+  run        stay linked and back up entries on their schedules
+  entries    list this PC's entries and when they run next
   backup     back up folders
   snapshots  list backups
   restore    restore a backup into a folder
@@ -53,6 +55,7 @@ var commands = map[string]command{
 	"join":      cmdJoin,
 	"unlock":    cmdUnlock,
 	"run":       cmdRun,
+	"entries":   cmdEntries,
 	"backup":    cmdBackup,
 	"snapshots": cmdSnapshots,
 	"restore":   cmdRestore,
@@ -192,7 +195,8 @@ func cmdJoin(ctx context.Context, cfgPath string, args []string) error {
 	if err := unlock(ctx, cfgPath, cfg, res.Email); err != nil {
 		return fmt.Errorf("%w\nThe PC is linked; run `restash-agent unlock` to try again", err)
 	}
-	fmt.Fprintln(os.Stderr, "\nAll set. This PC can back up now, and shows up on the website.")
+	fmt.Fprintln(os.Stderr, "\nAll set. Pick folders to back up on the website, on this PC's page.")
+	fmt.Fprintln(os.Stderr, "Keep `restash-agent run` going so backups happen on their schedules.")
 	return nil
 }
 
@@ -213,12 +217,81 @@ func cmdUnlock(ctx context.Context, cfgPath string, args []string) error {
 }
 
 func cmdRun(ctx context.Context, cfgPath string, args []string) error {
-	cfg, err := agent.Load(cfgPath)
+	cfg, r, err := load(cfgPath)
 	if err != nil {
 		return err
 	}
+	rn, err := agent.NewRunner(cfg, agent.StatePath(cfgPath), r)
+	if err != nil {
+		return err
+	}
+	pcKey, err := vault.PCKeyFromPassword(cfg.RepoKey)
+	if err != nil {
+		return err
+	}
+	entryKey := vault.EntryKey(pcKey)
+
+	syncEntries := func() {
+		sctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		if err := rn.Sync(sctx); err != nil {
+			slog.Warn("couldn't fetch entries", "err", err)
+		}
+	}
+	go rn.Run(ctx)
 	slog.Info("linking to the server", "server", cfg.Server, "pc", cfg.PCID)
-	return agent.RunLink(ctx, cfg, version, func() { slog.Info("linked; this PC shows as online") })
+	return agent.RunLink(ctx, cfg, version, agent.LinkHandler{
+		OnUp: func() {
+			slog.Info("linked; this PC shows as online")
+			go syncEntries() // pick up changes made while offline
+		},
+		OnEntries: func() { go syncEntries() },
+		OnRun: func(entry string) {
+			slog.Info("asked to back up now", "entry", entry)
+			go rn.RunNow(entry)
+		},
+		OnBrowse: func(data string) (string, error) { return agent.AnswerBrowse(entryKey, cfg.PCID, data) },
+	})
+}
+
+func cmdEntries(ctx context.Context, cfgPath string, args []string) error {
+	cfg, r, err := load(cfgPath)
+	if err != nil {
+		return err
+	}
+	rn, err := agent.NewRunner(cfg, agent.StatePath(cfgPath), r)
+	if err != nil {
+		return err
+	}
+	if err := rn.Sync(ctx); err != nil {
+		return err
+	}
+	list := rn.Entries()
+	if len(list) == 0 {
+		fmt.Println("No entries yet. Add one on the website, on this PC's page.")
+		return nil
+	}
+	now := time.Now()
+	for _, e := range list {
+		last := rn.LastRun(e.ID)
+		next := "only when asked"
+		if t, ok := e.Schedule.Next(last, now); ok {
+			next = "now"
+			if t.After(now) {
+				next = t.Format("Mon Jan 2 15:04")
+			}
+		}
+		lastS := "never"
+		if !last.IsZero() {
+			lastS = last.Format("Mon Jan 2 15:04")
+		}
+		fmt.Printf("%s (%s)\n  folders: %s\n", e.Name, e.ID, strings.Join(e.Paths, ", "))
+		if len(e.Skips) > 0 {
+			fmt.Printf("  skips:   %s\n", strings.Join(e.Skips, ", "))
+		}
+		fmt.Printf("  last run: %s, next: %s\n", lastS, next)
+	}
+	return nil
 }
 
 // list collects repeated flag values, e.g. -exclude a -exclude b.

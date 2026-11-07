@@ -12,6 +12,60 @@ export interface Run {
   ok: boolean;
 }
 
+export type ScheduleKind = "hourly" | "daily" | "weekly" | "manual";
+
+export interface Schedule {
+  kind: ScheduleKind;
+  minute: number; // minutes after midnight, PC time (daily, weekly)
+  weekday: number; // 0 = Sunday (weekly)
+}
+
+export interface Retention {
+  last: number;
+  allDays: number;
+  dailyDays: number;
+  weeklyWeeks: number;
+  monthlyMonths: number;
+  yearlyYears: number;
+}
+
+/** The locked part of an entry. */
+export interface EntryConfig {
+  name: string;
+  paths: string[];
+  skips: string[];
+  retention: Retention;
+}
+
+export interface RunDetail {
+  entry: string;
+  startedAt: string;
+  at: string;
+  ok: boolean;
+  files: number;
+  bytes: number;
+  added: number;
+  detail?: string; // locked
+}
+
+export interface EntryRecord {
+  id: string;
+  schedule: Schedule;
+  config: string; // locked EntryConfig
+  createdAt: string;
+  updatedAt: string;
+  lastOk: RunDetail | null;
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string;
+  dirs: string[];
+  home: string;
+  sep: string;
+  error?: string;
+}
+
 export interface PC {
   id: string;
   name: string;
@@ -26,6 +80,14 @@ export interface PC {
   lastOk: string | null;
   stored: number;
   recent: Run[];
+  schedules: Schedule[];
+}
+
+export interface PCDetail extends PC {
+  pcKey: string;
+  timezone: string;
+  entries: EntryRecord[];
+  runs: RunDetail[];
 }
 
 export interface JoinCode {
@@ -116,6 +178,14 @@ export const api = {
   pcs: () => call<PC[]>("GET", "/api/pcs"),
   createJoinCode: () => call<JoinCode>("POST", "/api/pcs/join"),
   joinStatus: (code: string) => call<JoinStatus>("GET", "/api/pcs/join/" + encodeURIComponent(code)),
+
+  pc: (id: string) => call<PCDetail>("GET", "/api/pcs/" + encodeURIComponent(id)),
+  createEntry: (pc: string, body: { id: string; schedule: Schedule; config: string }) => call<EntryRecord>("POST", `/api/pcs/${encodeURIComponent(pc)}/entries`, body),
+  updateEntry: (pc: string, id: string, body: { schedule: Schedule; config: string }) =>
+    call<void>("PUT", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`, body),
+  deleteEntry: (pc: string, id: string) => call<void>("DELETE", `/api/pcs/${encodeURIComponent(pc)}/entries/${encodeURIComponent(id)}`),
+  runNow: (pc: string, entry = "") => call<void>("POST", `/api/pcs/${encodeURIComponent(pc)}/run`, { entry }),
+  browse: (pc: string, data: string) => call<{ data: string }>("POST", `/api/pcs/${encodeURIComponent(pc)}/browse`, { data }),
 
   people: () => call<People>("GET", "/api/people"),
   createInvite: (email: string) => call<Invite>("POST", "/api/invites", { email }),
