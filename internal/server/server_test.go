@@ -41,11 +41,9 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { st.Close() })
 	e := &env{t: t, store: st}
-	rest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.rest = append(e.rest, r.Method+" "+r.URL.Path)
-	}))
-	t.Cleanup(rest.Close)
-	restURL, _ := url.Parse(rest.URL)
+	})
 	pub, _ := url.Parse("http://restash.test")
 	ntfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.ntfyMu.Lock()
@@ -56,7 +54,7 @@ func newEnv(t *testing.T) *env {
 	s, err := New(context.Background(), Config{
 		NtfyServer: ntfy.URL,
 		PublicURL:  pub, Store: st,
-		Repos:    trash.NewProxy(restURL, filepath.Join(dir, "repos"), filepath.Join(dir, "trash")),
+		Repos:    trash.NewProxyFor(rest, filepath.Join(dir, "repos"), filepath.Join(dir, "trash")),
 		ReposDir: filepath.Join(dir, "repos"), Storage: dir,
 	})
 	if err != nil {

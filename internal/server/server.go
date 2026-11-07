@@ -22,7 +22,7 @@ import (
 type Config struct {
 	PublicURL *url.URL     // e.g. https://restash.bulazs.com
 	Store     *store.Store //
-	Repos     *trash.Proxy // the delete-to-trash proxy in front of rest-server
+	Repos     *trash.Proxy // serves the repos, with deletes going to the trash
 	ReposDir  string       // where the repos are on disk, for sizes
 	Storage   string       // the storage folder, for free space
 	Web       fs.FS        // the built web UI; nil to serve none

@@ -86,11 +86,11 @@ public site.
 
 ## Server
 
-The server runs in Docker next to restic's
-[rest-server](https://github.com/restic/rest-server). restash sits in front
-of it: it checks each PC's login, keeps each PC in its own repo, and turns
-deletes into moves to a trash folder that is emptied after 30 days, so a
-broken or hacked PC can't wipe its own backup history.
+The server is one Docker container. It serves the restic repos itself, with
+restic's own [rest-server](https://github.com/restic/rest-server) code built
+in, and checks every request first: each PC's login, each PC in its own
+repo, and deletes turned into moves to a trash folder that is emptied after
+30 days, so a broken or hacked PC can't wipe its own backup history.
 
 See [compose.yaml](compose.yaml). In short:
 
@@ -105,7 +105,6 @@ docker compose logs restash | grep signup   # link for the admin account
 | ------------------------- | ------------------------- | ----------------------------------------- |
 | `RESTASH_PUBLIC_URL`      | `http://localhost:8080`   | The site's address, used in links         |
 | `RESTASH_LISTEN`          | `:8080`                   | Address to listen on                      |
-| `RESTASH_REST_SERVER_URL` | `http://rest-server:8000` | Where rest-server is                      |
 | `RESTASH_STORAGE`         | `/storage`                | Folder holding the database, repos, trash |
 | `RESTASH_DB`              | `$RESTASH_STORAGE/restash.db` | SQLite database                       |
 | `RESTASH_TRASH_DAYS`      | `30`                      | Days deleted files stay in the trash      |

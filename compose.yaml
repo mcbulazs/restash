@@ -1,5 +1,5 @@
 # Server setup: put this file in one folder (e.g. /mnt/data/tools/restash)
-# and create the storage folder, owned by the user both containers run as:
+# and create the storage folder, owned by the user restash runs as:
 #
 #   mkdir -p storage/repos storage/trash
 #   chown -R 65532:65532 storage
@@ -14,7 +14,6 @@ services:
     restart: unless-stopped
     environment:
       RESTASH_PUBLIC_URL: https://restash.bulazs.com
-      RESTASH_REST_SERVER_URL: http://rest-server:8000
       # Deleted backup files stay in storage/trash this many days.
       RESTASH_TRASH_DAYS: 30
       # restash's own ntfy alerts are off: the homelab dashboard alerts
@@ -26,22 +25,22 @@ services:
       RESTASH_METRICS_LISTEN: ":9464"
     volumes:
       # Database, repos and trash. One mount, so deletes are plain renames.
+      # The repos are served by restic's rest-server, built into restash.
       - ./storage:/storage
     read_only: true
+    tmpfs:
+      - /tmp:size=64m # SQLite's scratch space
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 256m
+    mem_limit: 512m
     pids_limit: 100
     healthcheck:
       test: ["CMD", "/restash-server", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
-    depends_on:
-      - rest-server
     networks:
       - traefik
-      - storage
       - monitoring # Prometheus scrapes restash:9464/metrics
     labels:
       - "traefik.enable=true"
@@ -51,31 +50,7 @@ services:
       - "traefik.http.services.restash.loadbalancer.server.port=8080"
       - "dashboard.name=restash"
 
-  # Only reachable through restash, which checks each PC's login, keeps it
-  # in its own /<pc id>/ folder and turns deletes into moves to the trash.
-  rest-server:
-    image: restic/rest-server:0.14.0
-    container_name: restash-rest-server
-    restart: unless-stopped
-    user: "65532:65532"
-    environment:
-      DATA_DIRECTORY: /data
-      DISABLE_AUTHENTICATION: "1"
-    volumes:
-      - ./storage/repos:/data
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    mem_limit: 512m
-    pids_limit: 100
-    networks:
-      - storage
-    labels:
-      - "dashboard.group=restash"
-
 networks:
-  storage:
-    internal: true # no outside access; only restash talks to rest-server
   traefik:
     external: true
   monitoring:

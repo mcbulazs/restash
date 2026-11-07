@@ -1,6 +1,6 @@
 // restash-server is the server side of restash: the web UI and API, the
-// agents' link, and the restic repos (through the delete-to-trash proxy in
-// front of rest-server).
+// agents' link, and the restic repos (restic's rest-server, built in, with
+// deletes going to a trash folder).
 package main
 
 import (
@@ -31,7 +31,6 @@ var version = "dev"
 type config struct {
 	listen     string
 	publicURL  *url.URL
-	restServer *url.URL
 	storage    string
 	db         string
 	webDir     string
@@ -55,11 +54,6 @@ func loadConfig() (config, error) {
 		return c, fmt.Errorf("RESTASH_PUBLIC_URL must be the site's URL, e.g. https://restash.example.com")
 	}
 	c.publicURL = pub
-	u, err := url.Parse(env("RESTASH_REST_SERVER_URL", "http://rest-server:8000"))
-	if err != nil || u.Host == "" {
-		return c, fmt.Errorf("RESTASH_REST_SERVER_URL is not a URL")
-	}
-	c.restServer = u
 	c.storage = env("RESTASH_STORAGE", "/storage")
 	c.db = env("RESTASH_DB", filepath.Join(c.storage, "restash.db"))
 	c.webDir = os.Getenv("RESTASH_WEB_DIR")
@@ -111,10 +105,14 @@ func run() error {
 	if cfg.webDir != "" {
 		webFS = os.DirFS(cfg.webDir)
 	}
+	repoProxy, err := trash.NewProxy(repos, trashDir)
+	if err != nil {
+		return fmt.Errorf("serving repos: %w", err)
+	}
 	srv, err := server.New(ctx, server.Config{
 		PublicURL:   cfg.publicURL,
 		Store:       st,
-		Repos:       trash.NewProxy(cfg.restServer, repos, trashDir),
+		Repos:       repoProxy,
 		ReposDir:    repos,
 		Storage:     cfg.storage,
 		Web:         webFS,

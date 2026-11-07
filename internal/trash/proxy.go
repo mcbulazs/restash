@@ -1,7 +1,8 @@
-// Package trash sits in front of rest-server and turns deletes into moves to a
-// trash folder, so a broken or hacked PC can't wipe its own backup history.
-// Files stay in the trash for a set number of days before the janitor removes
-// them for good. Everything else is passed through to rest-server untouched.
+// Package trash serves restic repos (with restic's own rest-server code,
+// running inside restash) and turns deletes into moves to a trash folder,
+// so a broken or hacked PC can't wipe its own backup history. Files stay in
+// the trash for a set number of days before the janitor removes them for
+// good. Everything else goes to rest-server untouched.
 package trash
 
 import (
@@ -10,38 +11,44 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	restserver "github.com/restic/rest-server"
 )
 
-// Proxy forwards restic's REST traffic to rest-server. Callers must check
-// the login and that the path belongs to the caller before it gets here.
+// Proxy serves restic's REST protocol for the repos folder. Callers must
+// check the login and that the path belongs to the caller before it gets
+// here; rest-server itself checks nothing.
 type Proxy struct {
-	repos   string // folder rest-server serves the repos from
+	repos   string // folder the repos are in
 	trash   string // folder deleted files are moved to
-	forward *httputil.ReverseProxy
+	forward http.Handler
 	now     func() time.Time
 }
 
-// NewProxy builds a proxy for the rest-server at upstream. repos and trash
-// must be on the same filesystem (and the same mount) so moves are renames.
-func NewProxy(upstream *url.URL, repos, trash string) *Proxy {
-	rp := &httputil.ReverseProxy{
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(upstream)
-			r.SetXForwarded()
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			slog.Error("rest-server unreachable", "err", err)
-			http.Error(w, "storage unavailable", http.StatusBadGateway)
-		},
+// NewProxy serves the repos in repos. repos and trash must be on the same
+// filesystem (and the same mount) so moves are renames.
+func NewProxy(repos, trash string) (*Proxy, error) {
+	if err := os.MkdirAll(repos, 0o700); err != nil {
+		return nil, err
 	}
-	return &Proxy{repos: repos, trash: trash, forward: rp, now: time.Now}
+	h, err := restserver.NewHandler(&restserver.Server{
+		Path:   repos,
+		NoAuth: true, // restash checks every request first
+	})
+	if err != nil {
+		return nil, err
+	}
+	return NewProxyFor(h, repos, trash), nil
+}
+
+// NewProxyFor is NewProxy with h in place of rest-server (for tests).
+func NewProxyFor(h http.Handler, repos, trash string) *Proxy {
+	return &Proxy{repos: repos, trash: trash, forward: h, now: time.Now}
 }
 
 // File types in a restic repo, see the REST backend spec. Locks are

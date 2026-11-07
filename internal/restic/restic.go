@@ -20,8 +20,8 @@ import (
 // Repo says where a repo lives and how to open it.
 type Repo struct {
 	URL      string // e.g. https://restash.bulazs.com/repo/anna/
-	Username string // rest-server login
-	Password string // rest-server password
+	Username string // the PC id (restash checks it)
+	Password string // the PC token
 	Key      string // restic repo password; never leaves the PC unlocked
 }
 

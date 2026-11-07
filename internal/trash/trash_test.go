@@ -1,9 +1,10 @@
 package trash
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,10 +35,7 @@ func setup(t *testing.T, headStatus int) (*Proxy, *fakeRestServer, string) {
 	t.Helper()
 	root := t.TempDir()
 	fake := &fakeRestServer{headStatus: headStatus}
-	srv := httptest.NewServer(fake)
-	t.Cleanup(srv.Close)
-	u, _ := url.Parse(srv.URL)
-	p := NewProxy(u, filepath.Join(root, "repos"), filepath.Join(root, "trash"))
+	p := NewProxyFor(fake, filepath.Join(root, "repos"), filepath.Join(root, "trash"))
 	p.now = func() time.Time { return time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC) }
 	return p, fake, root
 }
@@ -159,5 +157,46 @@ func TestEmpty(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "2026-10-08,2026-11-07,not-a-day" {
 		t.Fatalf("left %v", names)
+	}
+}
+
+// The real rest-server, inside restash: create a repo, upload, read back,
+// and delete into the trash.
+func TestEmbeddedRestServer(t *testing.T) {
+	root := t.TempDir()
+	p, err := NewProxy(filepath.Join(root, "repos"), filepath.Join(root, "trash"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, path string, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := do("POST", "/pc1/?create=true", ""); rec.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	blob := "some encrypted bytes"
+	sum := sha256.Sum256([]byte(blob))
+	name := hex.EncodeToString(sum[:])
+	if rec := do("POST", "/pc1/data/"+name, blob); rec.Code != http.StatusOK {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do("POST", "/pc1/data/"+id, "doesn't match its name"); rec.Code == http.StatusOK {
+		t.Fatal("upload with a wrong hash accepted")
+	}
+	if rec := do("GET", "/pc1/data/"+name, ""); rec.Code != http.StatusOK || rec.Body.String() != blob {
+		t.Fatalf("read back: %d %q", rec.Code, rec.Body)
+	}
+	if rec := do("DELETE", "/pc1/data/"+name, ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	if rec := do("GET", "/pc1/data/"+name, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("still there: %d", rec.Code)
+	}
+	day := time.Now().UTC().Format(dayLayout)
+	if _, err := os.Stat(filepath.Join(root, "trash", day, "pc1", "data", name)); err != nil {
+		t.Fatalf("not in the trash: %v", err)
 	}
 }
