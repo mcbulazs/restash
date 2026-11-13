@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -35,12 +36,17 @@ type inviteJSON struct {
 	Link      string    `json:"link"`
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	// Set when the invite was just made: whether it went out by email, and
+	// why not if sending failed.
+	Emailed    bool   `json:"emailed,omitempty"`
+	EmailError string `json:"emailError,omitempty"`
 }
 
 type peopleJSON struct {
 	People  []personJSON `json:"people"`
 	Invites []inviteJSON `json:"invites"`
 	Space   spaceJSON    `json:"space"`
+	Mail    bool         `json:"mail"` // whether restash can email invites
 }
 
 type spaceJSON struct {
@@ -80,7 +86,7 @@ func (s *Server) handlePeople(w http.ResponseWriter, r *http.Request) {
 	for _, p := range pcs {
 		byUser[p.UserID] = append(byUser[p.UserID], p)
 	}
-	out := peopleJSON{People: []personJSON{}, Invites: []inviteJSON{}}
+	out := peopleJSON{People: []personJSON{}, Invites: []inviteJSON{}, Mail: s.mail != nil}
 	for _, u := range users {
 		p := personJSON{userJSON: toUserJSON(&u), CreatedAt: u.CreatedAt, PCs: len(byUser[u.ID]), AllSafe: len(byUser[u.ID]) > 0, Limit: u.StorageLimit}
 		never := false
@@ -137,12 +143,43 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, store.ErrEmailTaken.Error())
 		return
 	}
-	inv, err := s.store.CreateInvite(r.Context(), email, false, userFrom(r.Context()).ID, store.InviteLength)
+	admin := userFrom(r.Context())
+	inv, err := s.store.CreateInvite(r.Context(), email, false, admin.ID, store.InviteLength)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, inviteJSON{Token: inv.Token, Email: inv.Email, Link: s.inviteLink(inv.Token), CreatedAt: inv.CreatedAt, ExpiresAt: inv.ExpiresAt})
+	out := inviteJSON{Token: inv.Token, Email: inv.Email, Link: s.inviteLink(inv.Token), CreatedAt: inv.CreatedAt, ExpiresAt: inv.ExpiresAt}
+	// The invite exists either way; if the email fails, the admin still gets
+	// the link to send themselves.
+	if s.mail != nil {
+		if err := s.sendInvite(r.Context(), inv, admin); err != nil {
+			slog.Warn("sending invite email", "to", inv.Email, "err", err)
+			out.EmailError = err.Error()
+		} else {
+			out.Emailed = true
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSendInvite emails a waiting invite again.
+func (s *Server) handleSendInvite(w http.ResponseWriter, r *http.Request) {
+	if s.mail == nil {
+		httpError(w, http.StatusBadRequest, "this server isn't set up to send email")
+		return
+	}
+	inv, err := s.store.InviteByToken(r.Context(), r.PathValue("token"))
+	if err != nil || inv.Email == "" {
+		httpError(w, http.StatusNotFound, store.ErrInviteInvalid.Error())
+		return
+	}
+	if err := s.sendInvite(r.Context(), inv, userFrom(r.Context())); err != nil {
+		slog.Warn("sending invite email", "to", inv.Email, "err", err)
+		httpError(w, http.StatusBadGateway, "couldn't send the email: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDeleteInvite(w http.ResponseWriter, r *http.Request) {

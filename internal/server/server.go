@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mcbulazs/restash/internal/mail"
 	"github.com/mcbulazs/restash/internal/store"
 	"github.com/mcbulazs/restash/internal/trash"
 )
@@ -33,7 +34,10 @@ type Config struct {
 	// AgentSource is where agent downloads come from: a release download
 	// URL ending in / (see DefaultAgentSource) or a local folder.
 	AgentSource string
-	Now         func() time.Time
+	// Mail sends invite emails; nil turns email off, and the admin sends
+	// invite links themselves.
+	Mail *mail.Sender
+	Now  func() time.Time
 }
 
 // Server handles all HTTP requests.
@@ -45,6 +49,7 @@ type Server struct {
 	limits    *limiter
 	restores  restoreJobs
 	notify    *notifier
+	mail      *mail.Sender
 	pokeCheck chan struct{}
 	agents    *agentFiles
 	progress  progressStore
@@ -70,6 +75,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		sizes:    newSizeCache(cfg.ReposDir, 5*time.Minute),
 		limits:   newLimiter(),
 		fakeSalt: secret,
+		mail:     cfg.Mail,
 		now:      now,
 		notify: &notifier{server: cfg.NtfyServer, client: &http.Client{Timeout: 15 * time.Second}, store: cfg.Store,
 			site: strings.TrimSuffix(cfg.PublicURL.String(), "/") + "/activity"},
@@ -129,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/storage", s.user(s.handleStorage))
 	mux.Handle("POST /api/invites", s.admin(s.handleCreateInvite))
 	mux.Handle("DELETE /api/invites/{token}", s.admin(s.handleDeleteInvite))
+	mux.Handle("POST /api/invites/{token}/send", s.admin(s.handleSendInvite))
 
 	// Agents
 	mux.HandleFunc("POST /api/agent/join", s.handleAgentJoin)

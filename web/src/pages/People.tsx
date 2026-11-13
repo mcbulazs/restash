@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, type Person } from "../api.ts";
+import { api, type Invite, type Person } from "../api.ts";
 import { Link } from "../router.tsx";
 import { bytes, daysBetween, shortDate } from "../format.ts";
 import { Avatar, CopyButton, ErrorBox, Field, Icon, useLoad } from "../components/ui.tsx";
@@ -17,18 +17,18 @@ function Status({ p }: { p: Person }) {
   return <span className="status-dot hollow status-warn">Quiet for {days} day{days === 1 ? "" : "s"}</span>;
 }
 
-function InviteForm({ onDone }: { onDone: () => void }) {
+function InviteForm({ mail, onDone }: { mail: boolean; onDone: () => void }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [link, setLink] = useState("");
+  const [made, setMade] = useState<Invite | null>(null);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     api.createInvite(email).then(
       (inv) => {
-        setLink(inv.link);
+        setMade(inv);
         setBusy(false);
         onDone();
       },
@@ -38,15 +38,29 @@ function InviteForm({ onDone }: { onDone: () => void }) {
       },
     );
   };
-  if (link)
+  if (made)
     return (
       <div className="form">
-        <p>
-          Send this link to <strong>{email}</strong>. It works once, for 7 days.
-        </p>
+        {made.emailed ? (
+          <p>
+            <strong>Invite sent to {made.email}.</strong> It works once, for 7 days. If it doesn't arrive, they can check their spam
+            folder, or you can send them the link yourself:
+          </p>
+        ) : mail ? (
+          <div className="notice">
+            <Icon.warning />
+            <span>
+              Couldn't email {made.email}{made.emailError ? ` (${made.emailError})` : ""}. Send them this link yourself instead. It works once, for 7 days.
+            </span>
+          </div>
+        ) : (
+          <p>
+            Send this link to <strong>{made.email}</strong>. It works once, for 7 days.
+          </p>
+        )}
         <div className="command">
-          <code>{link}</code>
-          <CopyButton text={link} className="" />
+          <code>{made.link}</code>
+          <CopyButton text={made.link} className="" />
         </div>
       </div>
     );
@@ -54,12 +68,34 @@ function InviteForm({ onDone }: { onDone: () => void }) {
     <form className="invite-form" onSubmit={submit}>
       <Field label="Their email" type="email" name="invite-email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
       <button className="btn btn-primary" disabled={busy}>
-        {busy ? "Making link…" : "Make invite link"}
+        {mail ? (busy ? "Sending…" : "Send invite") : busy ? "Making link…" : "Make invite link"}
       </button>
       <div style={{ flexBasis: "100%" }}>
         <ErrorBox error={error} />
       </div>
     </form>
+  );
+}
+
+/** Emails a waiting invite again. */
+function SendAgain({ token }: { token: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "sent" | "failed">("idle");
+  const [error, setError] = useState("");
+  const send = () => {
+    setState("busy");
+    api.sendInvite(token).then(
+      () => setState("sent"),
+      (err) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setState("failed");
+      },
+    );
+  };
+  if (state === "sent") return <span className="small">Sent</span>;
+  return (
+    <button className={`btn btn-link${state === "failed" ? " fail-text" : ""}`} disabled={state === "busy"} onClick={send} title={error || undefined}>
+      {state === "busy" ? "Sending…" : state === "failed" ? "Couldn't send. Try again" : "Send again"}
+    </button>
   );
 }
 
@@ -142,9 +178,11 @@ export function PeoplePage() {
         <div className="card card-pad">
           <h2>Invite someone</h2>
           <p className="muted" style={{ marginBottom: 18 }}>
-            restash doesn't send email. You get a link to send them yourself.
+            {data.mail
+              ? "restash emails them a link to make their account. You also get the link, in case the email doesn't arrive."
+              : "restash doesn't send email here. You get a link to send them yourself."}
           </p>
-          <InviteForm onDone={reload} />
+          <InviteForm mail={data.mail} onDone={reload} />
         </div>
       )}
 
@@ -220,6 +258,7 @@ export function PeoplePage() {
                       {left <= 0 ? "today" : left === 1 ? "tomorrow" : `in ${left} days`}.
                     </div>
                   </div>
+                  {data.mail && <SendAgain token={inv.token} />}
                   <CopyButton text={inv.link} label="Copy link" />
                   <button className="btn btn-link" onClick={() => api.deleteInvite(inv.token).then(reload)}>
                     Cancel invite

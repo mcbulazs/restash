@@ -92,9 +92,11 @@ in, and checks every request first: each PC's login, each PC in its own
 repo, and deletes turned into moves to a trash folder that is emptied after
 30 days, so a broken or hacked PC can't wipe its own backup history.
 
-See [compose.yaml](compose.yaml). In short:
+See [compose.yaml](compose.yaml). Settings go in a `.env` file next to it;
+start from [env.example](env.example). In short:
 
 ```sh
+cp env.example .env    # then set RESTASH_PUBLIC_URL
 mkdir -p storage/repos storage/trash
 chown -R 65532:65532 storage
 docker compose up -d
@@ -111,9 +113,19 @@ docker compose logs restash | grep signup   # link for the admin account
 | `RESTASH_NTFY_SERVER`     | (off)                     | ntfy server for alerts, e.g. `https://ntfy.sh` |
 | `RESTASH_METRICS_LISTEN`  | (off)                     | Address for Prometheus metrics            |
 | `RESTASH_AGENT_SOURCE`    | this version's GitHub release | Where "Add a PC" downloads come from (a release URL ending in `/`, or a folder) |
+| `RESTASH_SMTP_HOST`       | (off)                     | SMTP server for invite emails, `host` or `host:port` (port 587 by default, 465 with `tls`) |
+| `RESTASH_SMTP_FROM`       |                           | Sender, e.g. `restash <no-reply@example.com>`; needed with `RESTASH_SMTP_HOST` |
+| `RESTASH_SMTP_USERNAME`   | (none)                    | SMTP login, if the server needs one       |
+| `RESTASH_SMTP_PASSWORD`   |                           | SMTP password                             |
+| `RESTASH_SMTP_TLS`        | `starttls`                | `starttls`, `tls` (port 465) or `none` (only for a relay on a private network) |
 
-People join by invite link (People → Invite someone). restash doesn't send
-email; you send the link yourself.
+People join by invite link (People → Invite someone). Without
+`RESTASH_SMTP_HOST`, restash doesn't send email: you send the link
+yourself. With it, restash emails the link from `RESTASH_SMTP_FROM`, with
+replies going to the admin who invited. The link is still shown in case
+the email doesn't arrive, and waiting invites can be sent again. Sending
+uses TLS unless `RESTASH_SMTP_TLS=none`, and the password is only sent
+over TLS.
 
 Deleting an entry asks whether to keep its backups (still restorable, and
 listed on the PC's page under "Backups of removed entries" until deleted)

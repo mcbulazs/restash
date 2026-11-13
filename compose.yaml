@@ -1,5 +1,7 @@
-# Server setup: put this file in one folder (e.g. /mnt/data/tools/restash)
-# and create the storage folder, owned by the user restash runs as:
+# Server setup: put this file and env.example in one folder (e.g.
+# /srv/stacks/tools/restash), copy env.example to .env and set
+# RESTASH_PUBLIC_URL, and create the storage folder, owned by the user
+# restash runs as:
 #
 #   mkdir -p storage/repos storage/trash
 #   chown -R 65532:65532 storage
@@ -12,17 +14,9 @@ services:
     image: ghcr.io/mcbulazs/restash:latest
     container_name: restash
     restart: unless-stopped
-    environment:
-      RESTASH_PUBLIC_URL: https://restash.bulazs.com
-      # Deleted backup files stay in storage/trash this many days.
-      RESTASH_TRASH_DAYS: 30
-      # restash's own ntfy alerts are off: the homelab dashboard alerts
-      # on backups from the metrics below. To have restash alert each
-      # person on their own topic instead, set an ntfy server here.
-      # RESTASH_NTFY_SERVER: https://ntfy.sh
-      # Prometheus metrics (per PC: online, last backup, size, problems).
-      # Only reachable on the monitoring network, not through Traefik.
-      RESTASH_METRICS_LISTEN: ":9464"
+    # Settings: copy env.example to .env and edit it.
+    env_file:
+      - .env
     volumes:
       # Database, repos and trash. One mount, so deletes are plain renames.
       # The repos are served by restic's rest-server, built into restash.

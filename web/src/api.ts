@@ -194,11 +194,16 @@ export interface Invite {
   link: string;
   createdAt: string;
   expiresAt: string;
+  /** Only on a new invite: whether it went out by email. */
+  emailed?: boolean;
+  emailError?: string;
 }
 
 export interface People {
   people: Person[];
   invites: Invite[];
+  /** Whether the server emails invites. */
+  mail: boolean;
   space: { total: number; used: number };
 }
 
@@ -287,4 +292,5 @@ export const api = {
   storage: () => call<Storage>("GET", "/api/storage"),
   createInvite: (email: string) => call<Invite>("POST", "/api/invites", { email }),
   deleteInvite: (token: string) => call<void>("DELETE", "/api/invites/" + encodeURIComponent(token)),
+  sendInvite: (token: string) => call<void>("POST", "/api/invites/" + encodeURIComponent(token) + "/send"),
 };

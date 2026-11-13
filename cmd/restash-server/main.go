@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mcbulazs/restash/internal/mail"
 	"github.com/mcbulazs/restash/internal/server"
 	"github.com/mcbulazs/restash/internal/store"
 	"github.com/mcbulazs/restash/internal/trash"
@@ -37,6 +38,7 @@ type config struct {
 	trashDays int
 	ntfy      string
 	metrics   string
+	mail      *mail.Sender // nil: email off
 }
 
 func env(key, def string) string {
@@ -66,6 +68,20 @@ func loadConfig() (config, error) {
 	c.trashDays, err = strconv.Atoi(env("RESTASH_TRASH_DAYS", "30"))
 	if err != nil || c.trashDays < 1 {
 		return c, fmt.Errorf("RESTASH_TRASH_DAYS must be a number of days")
+	}
+	// Invite emails are opt-in: without an SMTP server the admin sends
+	// invite links themselves.
+	if host := os.Getenv("RESTASH_SMTP_HOST"); host != "" {
+		c.mail, err = mail.New(mail.Config{
+			Addr:     host,
+			From:     os.Getenv("RESTASH_SMTP_FROM"),
+			Username: os.Getenv("RESTASH_SMTP_USERNAME"),
+			Password: os.Getenv("RESTASH_SMTP_PASSWORD"),
+			TLS:      os.Getenv("RESTASH_SMTP_TLS"),
+		})
+		if err != nil {
+			return c, fmt.Errorf("RESTASH_SMTP_*: %w", err)
+		}
 	}
 	return c, nil
 }
@@ -119,9 +135,13 @@ func run() error {
 		Version:     version,
 		NtfyServer:  cfg.ntfy,
 		AgentSource: env("RESTASH_AGENT_SOURCE", server.DefaultAgentSource(version)),
+		Mail:        cfg.mail,
 	})
 	if err != nil {
 		return err
+	}
+	if cfg.mail != nil {
+		slog.Info("invite emails on", "smtp", cfg.mail.Addr(), "from", cfg.mail.From())
 	}
 
 	if inv, err := st.SetupInvite(ctx); err == nil {
